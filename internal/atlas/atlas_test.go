@@ -177,6 +177,38 @@ func TestPlansFromExitTilesUseThemFirst(t *testing.T) {
 	}
 }
 
+func TestAppliedExitsInWallsServeOnlyAStartThere(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/t/cell", "#.").Object("portal", 0, 0, "slaying /t/yard", "hp 0", "sp 0")
+	c.Map("/t/yard", "..")
+	a, w := build(t, c)
+	yard, _ := w.Lookup("/t/yard")
+	p := plan(t, a, atlas.Request{Start: at(t, w, "/t/cell", 0, 0), GoalMap: yard})
+	if !p.Found || kinds(p) != "start exit goal" {
+		t.Fatalf("from the walled-in portal: %s", describe(p))
+	}
+	if p := plan(t, a, atlas.Request{Start: at(t, w, "/t/cell", 1, 0), GoalMap: yard}); p.Found {
+		t.Fatalf("walked into the wall to use its portal: %s", describe(p))
+	}
+}
+
+func TestPlansStopAtTheirExpansionLimit(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/t/a", "..").Object("portal", 1, 0, "slaying /t/b", "hp 0", "sp 0")
+	c.Map("/t/b", "..").Object("portal", 1, 0, "slaying /t/c", "hp 0", "sp 0")
+	c.Map("/t/c", "..")
+	a, w := build(t, c)
+	goal, _ := w.Lookup("/t/c")
+	start := at(t, w, "/t/a", 0, 0)
+	p := plan(t, a, atlas.Request{Start: start, GoalMap: goal, MaxExpanded: 2})
+	if p.Found || !p.LimitReached || p.Expanded != 2 {
+		t.Fatalf("limited: %+v", p)
+	}
+	if p := plan(t, a, atlas.Request{Start: start, GoalMap: goal}); !p.Found || p.LimitReached {
+		t.Fatalf("unlimited: %+v", p)
+	}
+}
+
 func TestSeamCrossingsFollowCornerAndExitRules(t *testing.T) {
 	// Diagonal neighbours touch only at a corner: a strict-corner walker
 	// needs both orthogonal neighbours to step across.
@@ -371,14 +403,23 @@ func TestPlansMatchExactSearchWithoutRoads(t *testing.T) {
 		}
 		a, w := build(t, c)
 		e := search.NewEngine(w, 1)
+		// One slot serves every query, so its scratch is reused throughout.
+		planner := atlas.NewPlanner(a, 1)
+		plan := func(t testing.TB, _ *atlas.Atlas, r atlas.Request) atlas.Plan {
+			t.Helper()
+			p, err := planner.Plan(context.Background(), r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return p
+		}
 		for range 20 {
 			sm := w.Maps[rng.IntN(len(w.Maps))]
 			gm := w.Maps[rng.IntN(len(w.Maps))]
 			sx, sy := int32(rng.IntN(int(sm.Width))), int32(rng.IntN(int(sm.Height)))
 			gx, gy := int32(rng.IntN(int(gm.Width))), int32(rng.IntN(int(gm.Height)))
-			if tile := sm.Tile(sx, sy); sm.Terrain[tile]&world.TerrainWalk == 0 || sm.Blocked[tile] {
-				continue // starts on passable automatic exits are kept
-			}
+			// Every start counts, walls and exit tiles included: an agent
+			// may start where it could not walk to.
 			goal := atlas.Position{Map: gm, X: gx, Y: gy}
 			p := plan(t, a, atlas.Request{Start: atlas.Position{Map: sm, X: sx, Y: sy}, GoalTile: &goal})
 			r, err := e.FindPath(context.Background(), search.Query{
@@ -420,10 +461,14 @@ func blocked(m *world.Map, x, y int32) bool {
 	return false
 }
 
-// checkWalkable asserts every intermediate waypoint stands on open ground.
+// checkWalkable asserts every waypoint after the start (where the agent
+// already is) stands on open ground.
 func checkWalkable(t *testing.T, p atlas.Plan) {
 	t.Helper()
 	for i, wp := range p.Waypoints {
+		if i == 0 {
+			continue
+		}
 		if wp.Kind == atlas.Walk || wp.Kind == atlas.Goal || wp.Kind == atlas.Arrive {
 			if blocked(wp.Map, wp.X, wp.Y) {
 				t.Fatalf("waypoint %d is not standable: %s", i, describe(p))

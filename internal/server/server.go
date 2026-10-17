@@ -270,7 +270,14 @@ func (s *Service) Plan(ctx context.Context, req *pb.PlanRequest) (*pb.PlanRespon
 	if err != nil {
 		return nil, err
 	}
-	r := atlas.Request{Start: atlas.Position(start), Spacing: int32(min(req.GetSpacing(), maxSpacing))}
+	r := atlas.Request{
+		Start:       atlas.Position(start),
+		Spacing:     int32(min(req.GetSpacing(), maxSpacing)),
+		MaxExpanded: s.limits.MaxExpanded,
+	}
+	if requested := int(req.GetMaxExpanded()); requested > 0 && requested < r.MaxExpanded {
+		r.MaxExpanded = requested
+	}
 	switch goal := req.GetGoal().(type) {
 	case *pb.PlanRequest_GoalTile:
 		tile, err := s.position(goal.GoalTile, "goal_tile")
@@ -310,8 +317,11 @@ func (s *Service) Plan(ctx context.Context, req *pb.PlanRequest) (*pb.PlanRespon
 			DurationMicros: uint64(p.Duration.Microseconds()),
 		},
 	}
-	if p.Found {
+	switch {
+	case p.Found:
 		resp.Status = pb.PathStatus_PATH_STATUS_FOUND
+	case p.LimitReached:
+		resp.Status = pb.PathStatus_PATH_STATUS_LIMIT_REACHED
 	}
 	for _, wp := range p.Waypoints {
 		resp.Waypoints = append(resp.Waypoints, &pb.Waypoint{

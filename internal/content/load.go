@@ -330,6 +330,9 @@ func placeObject(w *world.World, m *world.Map, header Attrs, o *Object, a *Arche
 				continue
 			}
 			partTile := m.Tile(px, py)
+			if IsRoad(a) {
+				m.Road[partTile] = true
+			}
 			partType := part.Attrs["type"]
 			if part.Attrs["no_pass"] == "1" && !passableType(partType) {
 				m.Blocked[partTile] = true

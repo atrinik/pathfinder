@@ -1170,7 +1170,10 @@ type PlanRequest struct {
 	AvoidedMaps []string `protobuf:"bytes,4,rep,name=avoided_maps,json=avoidedMaps,proto3" json:"avoided_maps,omitempty"`
 	// Greatest distance, in tiles (Chebyshev), between consecutive waypoints
 	// on one map. Zero selects 7, within the client's click-to-move reach.
-	Spacing       uint32 `protobuf:"varint,5,opt,name=spacing,proto3" json:"spacing,omitempty"`
+	Spacing uint32 `protobuf:"varint,5,opt,name=spacing,proto3" json:"spacing,omitempty"`
+	// Bound on expanded atlas connectors; zero selects the server default,
+	// and larger values are capped by it.
+	MaxExpanded   uint32 `protobuf:"varint,6,opt,name=max_expanded,json=maxExpanded,proto3" json:"max_expanded,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1247,6 +1250,13 @@ func (x *PlanRequest) GetAvoidedMaps() []string {
 func (x *PlanRequest) GetSpacing() uint32 {
 	if x != nil {
 		return x.Spacing
+	}
+	return 0
+}
+
+func (x *PlanRequest) GetMaxExpanded() uint32 {
+	if x != nil {
+		return x.MaxExpanded
 	}
 	return 0
 }
@@ -1397,7 +1407,7 @@ func (x *PlanMetrics) GetDurationMicros() uint64 {
 // PlanResponse carries the waypoints, start first, when a route was found.
 type PlanResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// PATH_STATUS_FOUND or PATH_STATUS_NO_PATH.
+	// PATH_STATUS_FOUND, PATH_STATUS_NO_PATH or PATH_STATUS_LIMIT_REACHED.
 	Status    PathStatus  `protobuf:"varint,1,opt,name=status,proto3,enum=atrinik.pathfinder.v1.PathStatus" json:"status,omitempty"`
 	Waypoints []*Waypoint `protobuf:"bytes,2,rep,name=waypoints,proto3" json:"waypoints,omitempty"`
 	// Road-weighted cost in thirds of a move: a step along a road costs 2,
@@ -1657,13 +1667,14 @@ const file_atrinik_pathfinder_v1_pathfinder_proto_rawDesc = "" +
 	"\x04maps\x18\x01 \x01(\rR\x04maps\x12\x14\n" +
 	"\x05tiles\x18\x02 \x01(\x04R\x05tiles\x12 \n" +
 	"\vtransitions\x18\x03 \x01(\rR\vtransitions\x12%\n" +
-	"\x0econtent_digest\x18\x04 \x01(\tR\rcontentDigest\"\xe6\x01\n" +
+	"\x0econtent_digest\x18\x04 \x01(\tR\rcontentDigest\"\x89\x02\n" +
 	"\vPlanRequest\x125\n" +
 	"\x05start\x18\x01 \x01(\v2\x1f.atrinik.pathfinder.v1.PositionR\x05start\x12>\n" +
 	"\tgoal_tile\x18\x02 \x01(\v2\x1f.atrinik.pathfinder.v1.PositionH\x00R\bgoalTile\x12\x1b\n" +
 	"\bgoal_map\x18\x03 \x01(\tH\x00R\agoalMap\x12!\n" +
 	"\favoided_maps\x18\x04 \x03(\tR\vavoidedMaps\x12\x18\n" +
-	"\aspacing\x18\x05 \x01(\rR\aspacingB\x06\n" +
+	"\aspacing\x18\x05 \x01(\rR\aspacing\x12!\n" +
+	"\fmax_expanded\x18\x06 \x01(\rR\vmaxExpandedB\x06\n" +
 	"\x04goal\"\xb4\x01\n" +
 	"\bWaypoint\x12;\n" +
 	"\bposition\x18\x01 \x01(\v2\x1f.atrinik.pathfinder.v1.PositionR\bposition\x127\n" +

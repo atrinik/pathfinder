@@ -59,6 +59,16 @@ func TestPlanOverGRPC(t *testing.T) {
 		t.Fatalf("avoided: %v %v", resp, err)
 	}
 
+	// A tight expansion bound stops the plan short.
+	resp, err = api.Plan(ctx, &pb.PlanRequest{
+		Start:       pos("/w/world_1_0", 2, 2),
+		Goal:        &pb.PlanRequest_GoalMap{GoalMap: "/w/inn"},
+		MaxExpanded: 1,
+	})
+	if err != nil || resp.GetStatus() != pb.PathStatus_PATH_STATUS_LIMIT_REACHED || resp.GetMetrics().GetExpanded() != 1 {
+		t.Fatalf("limited: %v %v", resp, err)
+	}
+
 	// A huge spacing keeps only the turns.
 	resp, err = api.Plan(ctx, &pb.PlanRequest{
 		Start:   pos("/w/world_0_0", 0, 1),

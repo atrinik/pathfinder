@@ -109,6 +109,7 @@ type gridSearch struct {
 	stamp  []uint32
 	gen    uint32
 	open   tileHeap
+	source int32 // the last search's source, which need not be standable
 }
 
 const unreached = int32(-1)
@@ -145,6 +146,7 @@ const cancelCheckInterval = 1024
 // context ends.
 func (g *gridSearch) run(ctx context.Context, m *world.Map, source int32) error {
 	g.prepare(len(m.Terrain))
+	g.source = source
 	g.stamp[source], g.dist[source], g.parent[source] = g.gen, 0, -1
 	g.open.push(tileNode{cost: 0, tile: source})
 	open := func(t int32) bool { return standable(m, t) }
@@ -174,6 +176,7 @@ func (g *gridSearch) run(ctx context.Context, m *world.Map, source int32) error 
 // carried onward by it.
 func (g *gridSearch) only(m *world.Map, source int32) {
 	g.prepare(len(m.Terrain))
+	g.source = source
 	g.stamp[source], g.dist[source], g.parent[source] = g.gen, 0, -1
 }
 
@@ -197,7 +200,9 @@ func (g *gridSearch) stepOnto(m *world.Map, tile int32) (cost int32, from int32,
 	if !passable(m, tile) {
 		return 0, 0, false
 	}
-	open := func(t int32) bool { return t == tile || standable(m, t) }
+	// The search's source steps off too, even from a tile nobody else can
+	// stand on.
+	open := func(t int32) bool { return t == tile || t == g.source || standable(m, t) }
 	best, bestFrom := int32(-1), int32(-1)
 	neighbours(m, tile, open, func(n int32) {
 		if n == tile {

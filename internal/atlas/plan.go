@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"math"
-	"slices"
 	"time"
 
 	"github.com/atrinik/pathfinder/internal/world"
@@ -56,12 +55,17 @@ type Request struct {
 	GoalMap  *world.Map
 	Avoided  map[int32]bool // map indexes to stay off (start and goal maps exempt)
 	Spacing  int32          // greatest waypoint distance on one map; 0 selects DefaultSpacing
+	// MaxExpanded bounds the connectors one plan expands; zero means no
+	// bound.
+	MaxExpanded int
 }
 
 // Plan is a planner answer.
 type Plan struct {
-	Found     bool
-	Waypoints []Waypoint
+	Found bool
+	// LimitReached is set when the plan stopped at MaxExpanded.
+	LimitReached bool
+	Waypoints    []Waypoint
 	// Cost is the road-weighted cost, in thirds of a move.
 	Cost int32
 	// Tiles is the number of tile moves along the plan, transitions included.
@@ -83,10 +87,30 @@ type Planner struct {
 	slots chan *scratch
 }
 
-// scratch is the tile search space one plan uses; each grows to the largest
-// map it has searched.
+// scratch is the search space one plan uses: tile searches, which grow to
+// the largest map searched, and the generation-stamped connector search.
 type scratch struct {
 	start, goal, leg gridSearch
+	dist, parent     []int32
+	stamp            []uint32
+	gen              uint32
+	open             tileHeap
+}
+
+// prepareConnectors readies the connector search for n connectors.
+func (s *scratch) prepareConnectors(n int) {
+	if len(s.dist) < n {
+		s.dist = make([]int32, n)
+		s.parent = make([]int32, n)
+		s.stamp = make([]uint32, n)
+		s.gen = 0
+	}
+	s.gen++
+	if s.gen == 0 {
+		clear(s.stamp)
+		s.gen = 1
+	}
+	s.open = s.open[:0]
 }
 
 // NewPlanner returns a planner running at most concurrency plans at once.
@@ -197,23 +221,36 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 	}
 
 	// Dijkstra over connectors from the start's reachable connectors.
-	dist := make(map[int32]int32, 64)
-	parent := make(map[int32]int32, 64)
-	var open tileHeap
+	s := p.s
+	s.prepareConnectors(len(a.Connectors))
 	push := func(id, cost, from int32) {
-		if old, ok := dist[id]; ok && old <= cost {
+		if s.stamp[id] == s.gen && s.dist[id] <= cost {
 			return
 		}
-		dist[id], parent[id] = cost, from
-		open.push(tileNode{cost: cost, tile: id})
+		s.stamp[id], s.dist[id], s.parent[id] = s.gen, cost, from
+		s.open.push(tileNode{cost: cost, tile: id})
 	}
-	if p.fromExit {
-		// Only the exit itself leads on.
-		if id, ok := a.Lookup(sm, r.Start.X, r.Start.Y); ok {
-			push(id, 0, noConnector)
+	// The start's own tile may be a connector nothing else walks to: an
+	// automatic exit, which is then the only way on, or an applied exit on a
+	// tile nobody can enter.
+	if id, ok := a.Lookup(sm, r.Start.X, r.Start.Y); ok {
+		push(id, 0, noConnector)
+	}
+	seedExit := func(tile int32) {
+		id, ok := a.Lookup(sm, tile%sm.Width, tile/sm.Width)
+		if !ok || a.Connectors[id].Component >= 0 {
+			return
+		}
+		if cost, _, ok := start.stepOnto(sm, tile); ok {
+			push(id, cost, noConnector)
 		}
 	}
-	for _, id := range p.startConnectors() {
+	if !p.fromExit {
+		// Automatic exits beside the start, which perhaps only the start
+		// (on a tile nobody else can stand on) touches.
+		neighbours(sm, startTile, func(t int32) bool { return passable(sm, t) && isAutomaticExitTile(sm, t) }, seedExit)
+	}
+	for _, id := range a.mapConnectors[sm.Index] {
 		if p.fromExit {
 			break
 		}
@@ -232,13 +269,16 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 	}
 	finish := noConnector
 	expanded := 0
-	for len(open) > 0 {
-		n := open.pop()
-		if n.cost != dist[n.tile] {
+	for len(s.open) > 0 {
+		n := s.open.pop()
+		if n.cost != s.dist[n.tile] {
 			continue
 		}
 		if n.cost >= best {
 			break
+		}
+		if r.MaxExpanded > 0 && expanded >= r.MaxExpanded {
+			return Plan{LimitReached: true, Expanded: expanded, Duration: time.Since(started)}, nil
 		}
 		if expanded%1024 == 0 {
 			if err := ctx.Err(); err != nil {
@@ -263,7 +303,7 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 		return Plan{Expanded: expanded, Duration: time.Since(started)}, nil
 	}
 	var chain []int32
-	for id := finish; id != noConnector; id = parent[id] {
+	for id := finish; id != noConnector; id = s.parent[id] {
 		chain = append(chain, id)
 	}
 	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
@@ -281,24 +321,6 @@ func (p *planner) avoided(m int32) bool {
 		return false
 	}
 	return r.GoalMap == nil || m != r.GoalMap.Index
-}
-
-// startConnectors lists the start map's walkable-to connectors in id order
-// (so equal-cost plans are stable); the start search's costs then decide
-// which of them are reachable.
-func (p *planner) startConnectors() []int32 {
-	seen := map[int32]bool{}
-	var ids []int32
-	for _, members := range p.a.componentConnectors[p.r.Start.Map.Index] {
-		for _, id := range members {
-			if !seen[id] {
-				seen[id] = true
-				ids = append(ids, id)
-			}
-		}
-	}
-	slices.Sort(ids)
-	return ids
 }
 
 // assemble expands a connector chain into waypoints.

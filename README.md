@@ -45,7 +45,10 @@ protocol.
   waypoints on one map are at most `spacing` tiles apart (7 by default), and
   walking straight between them stays within a tile of the planned route
   (half a tile on roads, whose entry and exit points are always kept). A
-  plan that starts on an automatic exit begins by taking it.
+  plan that starts on an automatic exit begins by taking it, and one that
+  starts on an exit inside a wall can still use it. `max_expanded` bounds the
+  connectors a plan may expand (capped by the server's `-max-expanded`);
+  hitting it returns `LIMIT_REACHED`.
   Roads cost two thirds of a plain step, so the route follows them where the
   detour pays; `cost` is in thirds of a move and `tiles` counts the moves.
   Agents with other abilities (keys, swimming, staying on one map) use
@@ -111,8 +114,9 @@ file from the `atlas` command (format
 A file is stamped with the content digest and map list and is refused for any
 other content. Loading recomputes the connectors, exits and seams (they
 follow cheaply from the content) and requires the file to match them exactly;
-only the costly walks are read, and each must join two connectors of one
-walkable component, so a damaged file cannot produce an impossible route.
+only the costly walks are read: exactly one from each connector to every
+other connector walkable from its component, so a damaged file is refused
+rather than silently losing or inventing routes.
 Files are byte-for-byte reproducible. Like path searches, at most
 `-max-concurrent` plans run at once, each reusing its own scratch space, and
 a canceled request stops its plan.
@@ -145,12 +149,13 @@ PATHFINDER_CONTENT=../content go test ./internal/search ./internal/atlas -run Re
 
 On the current content (3,660 maps, 2.08 million tiles), loading takes about
 a second; the 149-step walk from the Asteria inn to the Strakewood Island
-farm takes about 6 ms. The atlas has 8,878 connectors, 74,090 edges and
+farm takes about 6 ms. The atlas has 8,915 connectors, 74,277 edges and
 35,960 road tiles. Building it takes 35 ms on 32 cores and 250 ms on one;
-loading its 898 KB file takes 29 ms and 50 ms. Planning the inn-to-farm trip
-takes under 1 ms (64 waypoints over 163 tiles), and the 447-step walk from
-Strakewood town to the farm about 2.3 ms instead of 27 ms for the precise
-search; roads lengthen these walks by 5 to 10 %.
+loading its 900 KB file takes 29 ms and 50 ms. Planning the inn-to-farm trip
+takes about 0.6 ms (64 waypoints over 163 tiles), and the 447-step walk from
+Strakewood town to the farm about 1.7 ms instead of 28 ms for the precise
+search, allocating 25 KB with a reused planner slot; roads lengthen these
+walks by 5 to 10 %.
 
 Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Provenance is recorded
 in [PROVENANCE.md](PROVENANCE.md) and dependencies in

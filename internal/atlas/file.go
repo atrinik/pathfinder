@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"time"
 
 	atlasv1 "github.com/atrinik/pathfinder/gen/go/atrinik/pathfinder/atlas/v1"
@@ -116,6 +115,16 @@ func Decode(w *world.World, f *atlasv1.Atlas) (*Atlas, error) {
 		}
 		transitions := a.Out[id]
 		matched := 0
+		// Exactly one walk to every other connector walkable from this
+		// connector's component.
+		required := map[int32]bool{}
+		if c.Component >= 0 {
+			for _, to := range a.componentConnectors[c.Map][c.Component] {
+				if to != int32(id) {
+					required[to] = true
+				}
+			}
+		}
 		var walks []Edge
 		for _, pe := range pc.GetEdges() {
 			switch pe.GetKind() {
@@ -124,6 +133,10 @@ func Decode(w *world.World, f *atlasv1.Atlas) (*Atlas, error) {
 				if err != nil {
 					return nil, fmt.Errorf("connector %d: %w", id, err)
 				}
+				if !required[e.To] {
+					return nil, fmt.Errorf("connector %d: unexpected or repeated walk to connector %d", id, e.To)
+				}
+				delete(required, e.To)
 				walks = append(walks, e)
 			case atlasv1.EdgeKind_EDGE_KIND_EXIT, atlasv1.EdgeKind_EDGE_KIND_SEAM:
 				if matched == len(transitions) || !sameTransition(transitions[matched], pe) {
@@ -137,8 +150,12 @@ func Decode(w *world.World, f *atlasv1.Atlas) (*Atlas, error) {
 		if matched != len(transitions) {
 			return nil, fmt.Errorf("connector %d: %d of its %d exits and seams are missing", id, len(transitions)-matched, len(transitions))
 		}
+		if len(required) > 0 {
+			return nil, fmt.Errorf("connector %d: %d walks are missing", id, len(required))
+		}
 		a.Out[id] = append(transitions, walks...)
 	}
+	a.stats = a.count()
 	a.Loaded = true
 	return a, nil
 }
@@ -149,9 +166,6 @@ func (a *Atlas) walkEdge(from int32, pe *atlasv1.Edge) (Edge, error) {
 		return Edge{}, fmt.Errorf("walk to connector %d", pe.GetTo())
 	}
 	fc, tc := a.Connectors[from], a.Connectors[pe.GetTo()]
-	if fc.Component < 0 || fc.Map != tc.Map || !slices.Contains(a.componentConnectors[fc.Map][fc.Component], int32(pe.GetTo())) {
-		return Edge{}, fmt.Errorf("walk to connector %d, which its component cannot reach", pe.GetTo())
-	}
 	floor := RoadStep * max(abs32(fc.X-tc.X), abs32(fc.Y-tc.Y))
 	if pe.GetCost() < uint32(floor) || pe.GetCost() > 1<<30 || pe.GetAutomatic() || pe.GetLabel() != "" {
 		return Edge{}, fmt.Errorf("walk to connector %d: bad cost %d or attributes", pe.GetTo(), pe.GetCost())

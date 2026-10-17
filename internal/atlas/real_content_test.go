@@ -116,9 +116,10 @@ func BenchmarkRealContentPlanTownToFarm(b *testing.B) {
 	tc := realJourneys[1]
 	start, goal := lookup(b, a.World, tc.from), lookup(b, a.World, tc.goalMap)
 	sx, sy, _ := nearestStandable(start, tc.x, tc.y)
+	planner := atlas.NewPlanner(a, 1) // one slot, reused like the server's
 	b.ReportAllocs()
 	for b.Loop() {
-		if p, _ := a.Plan(context.Background(), atlas.Request{Start: atlas.Position{Map: start, X: sx, Y: sy}, GoalMap: goal}); !p.Found {
+		if p, _ := planner.Plan(context.Background(), atlas.Request{Start: atlas.Position{Map: start, X: sx, Y: sy}, GoalMap: goal}); !p.Found {
 			b.Fatal("no plan")
 		}
 	}

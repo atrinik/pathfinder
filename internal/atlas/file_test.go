@@ -138,6 +138,27 @@ func TestMalformedAtlasFilesAreRejected(t *testing.T) {
 				}
 			}
 		},
+		"walks dropped": func(f *atlasv1.Atlas) {
+			for _, c := range f.Connectors {
+				var kept []*atlasv1.Edge
+				for _, e := range c.Edges {
+					if e.Kind != atlasv1.EdgeKind_EDGE_KIND_WALK {
+						kept = append(kept, e)
+					}
+				}
+				c.Edges = kept
+			}
+		},
+		"walk repeated": func(f *atlasv1.Atlas) {
+			for _, c := range f.Connectors {
+				for _, e := range c.Edges {
+					if e.Kind == atlasv1.EdgeKind_EDGE_KIND_WALK {
+						c.Edges = append(c.Edges, e)
+						return
+					}
+				}
+			}
+		},
 		"extra connector": func(f *atlasv1.Atlas) {
 			f.Connectors = append(f.Connectors, f.Connectors[len(f.Connectors)-1])
 		},

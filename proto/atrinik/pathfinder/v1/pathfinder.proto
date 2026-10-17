@@ -190,6 +190,9 @@ message PlanRequest {
   // Greatest distance, in tiles (Chebyshev), between consecutive waypoints
   // on one map. Zero selects 7, within the client's click-to-move reach.
   uint32 spacing = 5;
+  // Bound on expanded atlas connectors; zero selects the server default,
+  // and larger values are capped by it.
+  uint32 max_expanded = 6;
 }
 
 // WaypointKind is what to do at a waypoint.
@@ -230,7 +233,7 @@ message PlanMetrics {
 
 // PlanResponse carries the waypoints, start first, when a route was found.
 message PlanResponse {
-  // PATH_STATUS_FOUND or PATH_STATUS_NO_PATH.
+  // PATH_STATUS_FOUND, PATH_STATUS_NO_PATH or PATH_STATUS_LIMIT_REACHED.
   PathStatus status = 1;
   repeated Waypoint waypoints = 2;
   // Road-weighted cost in thirds of a move: a step along a road costs 2,

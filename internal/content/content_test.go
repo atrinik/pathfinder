@@ -186,6 +186,29 @@ func TestMultipartDoorsLockEverySquare(t *testing.T) {
 	}
 }
 
+func TestMultipartRoadsPaveEverySquare(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/t/river", "~~~", "~~~").Object("long_bridge", 0, 1)
+	root := c.Write()
+	bridges := filepath.Join(root, "arch", "floors", "bridge_wood")
+	if err := os.MkdirAll(bridges, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	extra := "Object long_bridge\nname bridge\nterrain_type 1\nend\nMore\n" +
+		"Object long_bridge_b\nterrain_type 1\nx 1\nend\n"
+	if err := os.WriteFile(filepath.Join(bridges, "long_bridge.arc"), []byte(extra), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := content.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := w.Lookup("/t/river")
+	if !m.Road[m.Tile(0, 1)] || !m.Road[m.Tile(1, 1)] || m.Road[m.Tile(2, 1)] || m.Road[m.Tile(0, 0)] {
+		t.Fatalf("road = %v", m.Road)
+	}
+}
+
 func TestLoadRejectsMapsWithoutAValidSize(t *testing.T) {
 	for _, header := range []string{"height 3\n", "width 0\nheight 3\n", "width x\nheight 3\n", "width 99999\nheight 3\n"} {
 		c := fixture.New(t)
