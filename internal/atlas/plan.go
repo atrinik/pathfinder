@@ -380,8 +380,12 @@ func (p *planner) seedSeamStarts(ctx context.Context, side *gridSearch, goalTile
 	sm := r.Start.Map
 	for dir := world.North; dir <= world.NorthWest; dir++ {
 		d := world.Deltas[dir]
+		if sm.InBounds(r.Start.X+d[0], r.Start.Y+d[1]) {
+			continue // an ordinary step, which the start search covers
+		}
+		// A seam may lead back onto this same map.
 		n, nx, ny, ok := a.World.Step(sm, r.Start.X, r.Start.Y, d[0], d[1])
-		if !ok || n == sm || p.avoided(n.Index) || !a.cornersOpen(sm, r.Start.X, r.Start.Y, d) {
+		if !ok || p.avoided(n.Index) || !a.cornersOpen(sm, r.Start.X, r.Start.Y, d) {
 			continue
 		}
 		dest := n.Tile(nx, ny)
@@ -589,6 +593,11 @@ func (p *planner) walk(plan *Plan, m *world.Map, path []int32, spacing int32) er
 	if len(path) < 2 {
 		return nil
 	}
+	// Simplifying costs time in proportion to the path, whose tiles the leg
+	// search has already paid for; an exhausted budget stops before it.
+	if p.work < 0 {
+		return errLimit
+	}
 	plan.Tiles += int32(len(path) - 1)
 	for _, i := range simplify(m, path, spacing, p.s) {
 		if p.work--; p.work < 0 {
@@ -666,9 +675,14 @@ func simplify(m *world.Map, path []int32, spacing int32, s *scratch) []int32 {
 }
 
 // appendWalkable appends the index hi, preceded by whatever points of
-// path[lo:hi] walking straight from path[lo] to path[hi] needs.
+// path[lo:hi] walking straight from path[lo] to path[hi] needs. A segment of
+// an all-road stretch must also stay on road tiles.
 func appendWalkable(m *world.Map, path []int32, out []int32, lo, hi int) []int32 {
-	if hi-lo > 1 && !straightWalkable(m, path[lo], path[hi]) {
+	road := true
+	for _, t := range path[lo : hi+1] {
+		road = road && m.Road[t]
+	}
+	if hi-lo > 1 && !straightWalkable(m, path[lo], path[hi], road) {
 		mid := (lo + hi) / 2
 		out = appendWalkable(m, path, out, lo, mid)
 		lo = mid
@@ -679,8 +693,9 @@ func appendWalkable(m *world.Map, path []int32, out []int32, lo, hi int) []int32
 
 // straightWalkable reports whether walking from a to b one eight-way step at
 // a time along the line between them stays on standable tiles (b itself may
-// be an automatic exit) under strict corners.
-func straightWalkable(m *world.Map, a, b int32) bool {
+// be an automatic exit) under strict corners, and, when road is set, on road
+// tiles.
+func straightWalkable(m *world.Map, a, b int32, road bool) bool {
 	ax, ay := a%m.Width, a/m.Width
 	dx, dy := b%m.Width-ax, b/m.Width-ay
 	n := max(abs32(dx), abs32(dy))
@@ -689,7 +704,7 @@ func straightWalkable(m *world.Map, a, b int32) bool {
 		x := ax + int32(math.Round(float64(k*dx)/float64(n)))
 		y := ay + int32(math.Round(float64(k*dy)/float64(n)))
 		tile := m.Tile(x, y)
-		if k < n && !standable(m, tile) || k == n && !passable(m, tile) {
+		if k < n && !standable(m, tile) || k == n && !passable(m, tile) || road && !m.Road[tile] {
 			return false
 		}
 		if x != px && y != py && (!passable(m, m.Tile(x, py)) || !passable(m, m.Tile(px, y))) {

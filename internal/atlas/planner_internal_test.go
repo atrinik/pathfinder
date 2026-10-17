@@ -52,3 +52,20 @@ func TestGridSearchesStopWhenCanceled(t *testing.T) {
 		t.Fatalf("live search: %v cost %d", err, g.cost(m.Tile(63, 63)))
 	}
 }
+
+func TestExhaustedPlansDoNotSimplify(t *testing.T) {
+	m := openMap(64, 1)
+	path := make([]int32, 64)
+	for i := range path {
+		path[i] = int32(i)
+	}
+	s := &scratch{}
+	p := planner{s: s, work: -1}
+	var plan Plan
+	if err := p.walk(&plan, m, path, 7); !errors.Is(err, errLimit) {
+		t.Fatalf("walk with no budget: %v", err)
+	}
+	if len(plan.Waypoints) != 0 || cap(s.keep) != 0 {
+		t.Fatal("the path was simplified anyway")
+	}
+}

@@ -352,6 +352,39 @@ func TestSeamCrossingsFollowCornerAndExitRules(t *testing.T) {
 	}
 }
 
+func TestRoadSegmentsStayOnTheRoad(t *testing.T) {
+	// The road bends from (1,0) down to (2,1); the straight chord from
+	// (0,0) to (2,1) would cross the plain tile (1,1).
+	c := fixture.New(t)
+	c.Map("/t/lane", "==.", "..=")
+	a, w := build(t, c)
+	goal := at(t, w, "/t/lane", 2, 1)
+	p := plan(t, a, atlas.Request{Start: at(t, w, "/t/lane", 0, 0), GoalTile: &goal})
+	if !p.Found || p.Cost != 2*atlas.RoadStep ||
+		describe(p) != "start /t/lane:0,0 | walk /t/lane:1,0 | goal /t/lane:2,1" {
+		t.Fatalf("cost %d: %s", p.Cost, describe(p))
+	}
+}
+
+func TestStartsInWallsUseSelfSeams(t *testing.T) {
+	// The east border leads back to the west one.
+	c := fixture.New(t)
+	c.Map("/t/loop", ".##").Set("tile_path_2", "/t/loop")
+	a, w := build(t, c)
+	goal := at(t, w, "/t/loop", 0, 0)
+	start := at(t, w, "/t/loop", 2, 0)
+	p := plan(t, a, atlas.Request{Start: start, GoalTile: &goal})
+	e := search.NewEngine(w, 1)
+	r, err := e.FindPath(context.Background(), search.Query{
+		Start: search.Position{Map: start.Map, X: 2}, GoalTile: &search.Position{Map: start.Map}})
+	if err != nil || r.Status != search.Found {
+		t.Fatalf("precise search: %v %v", r.Status, err)
+	}
+	if !p.Found || p.Cost != 3*r.Cost || kinds(p) != "start seam arrive goal" && kinds(p) != "start seam goal" {
+		t.Fatalf("cost %d (precise %d): %s", p.Cost, r.Cost, describe(p))
+	}
+}
+
 func TestWaypointsKeepRoadDetours(t *testing.T) {
 	c := fixture.New(t)
 	c.Map("/t/town", "=====", ".....")
