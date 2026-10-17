@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -137,14 +138,23 @@ func (s *Service) FindPath(ctx context.Context, req *pb.FindPathRequest) (*pb.Fi
 	if requested := int(req.GetMaxExpanded()); requested > 0 && requested < q.MaxExpanded {
 		q.MaxExpanded = requested
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, status.FromContextError(err).Err()
-	}
-	result, err := s.engine.FindPath(q)
+	result, err := s.engine.FindPath(ctx, q)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, searchError(err)
 	}
 	return toResponse(result), nil
+}
+
+// searchError maps an engine error to its gRPC status.
+func searchError(err error) error {
+	switch {
+	case errors.Is(err, search.ErrBusy):
+		return status.Error(codes.ResourceExhausted, "every search slot is busy; retry shortly")
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return status.FromContextError(err).Err()
+	default:
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
 }
 
 func toResponse(r search.Result) *pb.FindPathResponse {

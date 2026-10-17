@@ -30,7 +30,7 @@ func client(t *testing.T, limits server.Limits) pb.PathfinderServiceClient {
 	}
 	listener := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer()
-	pb.RegisterPathfinderServiceServer(srv, server.New(search.NewEngine(w), limits))
+	pb.RegisterPathfinderServiceServer(srv, server.New(search.NewEngine(w, 4), limits))
 	go func() { _ = srv.Serve(listener) }()
 	t.Cleanup(srv.Stop)
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -121,6 +121,25 @@ func TestFindPathRejectsMalformedRequests(t *testing.T) {
 		if status.Code(err) != tc.code {
 			t.Errorf("%s: got %v, want %v", name, err, tc.code)
 		}
+	}
+}
+
+func TestFindPathStopsForACanceledRequest(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/w/inn", "..", "..")
+	w, err := content.Load(c.Write())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := server.New(search.NewEngine(w, 1), server.DefaultLimits)
+	req := &pb.FindPathRequest{Start: pos("/w/inn", 0, 0), Goal: &pb.FindPathRequest_GoalTile{GoalTile: pos("/w/inn", 1, 1)}}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := svc.FindPath(canceled, req); status.Code(err) != codes.Canceled {
+		t.Errorf("canceled: %v", err)
+	}
+	if _, err := svc.FindPath(context.Background(), req); err != nil {
+		t.Errorf("live request: %v", err)
 	}
 }
 

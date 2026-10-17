@@ -63,6 +63,10 @@ func TestCoordinateNamesFollowTheTiledWorldConvention(t *testing.T) {
 		{"/shattered_islands/world_-2_57", "world", -2, 57, 0, true},
 		{"/shattered_islands/strakewood_island/apartments/apartment_cheap", "", 0, 0, 0, false},
 		{"/shattered_islands/strakewood_island/rockforge/rockforge_b_0104", "", 0, 0, 0, false},
+		// The integers must end the name: these are not coordinate maps.
+		{"/zone/zone_1_variant_2", "", 0, 0, 0, false},
+		{"/zone/1_2", "", 0, 0, 0, false},
+		{"/zone/level_1_2_3_4", "", 0, 0, 0, false},
 	} {
 		prefix, x, y, z, ok := content.Coordinate(tc.path)
 		if ok != tc.available || (ok && (prefix != tc.prefix || x != tc.x || y != tc.y || z != tc.z)) {
@@ -147,6 +151,24 @@ func TestCompileLinksSeamsExitsAndStairs(t *testing.T) {
 	// hp/sp of -1 (absent) arrive at the destination's entry point.
 	if teleporter[0].X != east.EnterX || teleporter[0].Y != east.EnterY {
 		t.Errorf("teleporter arrival = %+v", teleporter[0])
+	}
+}
+
+func TestLoadRejectsMapsWithoutAValidSize(t *testing.T) {
+	for _, header := range []string{"height 3\n", "width 0\nheight 3\n", "width x\nheight 3\n", "width 99999\nheight 3\n"} {
+		c := fixture.New(t)
+		root := c.Write()
+		dir := filepath.Join(root, "maps", "broken")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "map"), []byte("arch map\n"+header+"end\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := content.Load(root)
+		if err == nil || !strings.Contains(err.Error(), "/broken/map") {
+			t.Errorf("header %q: %v", header, err)
+		}
 	}
 }
 

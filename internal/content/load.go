@@ -124,36 +124,38 @@ func Resolve(source, destination string) string {
 }
 
 // Coordinate parses a coordinate-map basename such as "world_1_50" or
-// "world_6_48_-2": up to three underscore-separated integers of at most three
-// digits after a prefix. It reports ok=false for other names.
+// "world_6_48_-2": a non-empty prefix followed by exactly two or three
+// underscore-separated integers of at most three digits, ending the name.
+// It reports ok=false for other names.
 func Coordinate(mapPath string) (prefix string, x, y, z int, ok bool) {
 	parts := strings.Split(path.Base(mapPath), "_")
 	var values []int
-	first := -1
-	for i, part := range parts {
-		digits := strings.TrimPrefix(part, "-")
-		if digits == "" || len(digits) > 3 || strings.Trim(digits, "0123456789") != "" {
-			continue
-		}
-		n, err := strconv.Atoi(part)
-		if err != nil {
-			continue
-		}
-		if first < 0 {
-			first = i
-		}
-		values = append(values, n)
-		if len(values) == 3 {
+	for i := len(parts) - 1; i >= 0; i-- {
+		n, numeric := coordinatePart(parts[i])
+		if !numeric {
 			break
 		}
+		values = append(values, n)
 	}
-	if len(values) < 2 {
+	count := len(values)
+	if count < 2 || count > 3 || count == len(parts) {
 		return "", 0, 0, 0, false
 	}
-	if len(values) == 3 {
-		z = values[2]
+	// values holds the trailing integers last-first.
+	x, y = values[count-1], values[count-2]
+	if count == 3 {
+		z = values[0]
 	}
-	return strings.Join(parts[:first], "_"), values[0], values[1], z, true
+	return strings.Join(parts[:len(parts)-count], "_"), x, y, z, true
+}
+
+func coordinatePart(part string) (int, bool) {
+	digits := strings.TrimPrefix(part, "-")
+	if digits == "" || len(digits) > 3 || strings.Trim(digits, "0123456789") != "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(part)
+	return n, err == nil
 }
 
 // CoordinateNeighbour names the coordinate map offset from mapPath.
@@ -204,9 +206,13 @@ func Compile(archetypes map[string]*Archetype, files map[string]*MapFile, digest
 	maps := make([]*world.Map, 0, len(paths))
 	for _, p := range paths {
 		h := files[p].Header
-		width, height := int32(h.Int("width", 0)), int32(h.Int("height", 0))
-		if width <= 0 || height <= 0 {
-			continue
+		width, err := dimension(h, "width")
+		if err != nil {
+			return nil, fmt.Errorf("map %s: %w", p, err)
+		}
+		height, err := dimension(h, "height")
+		if err != nil {
+			return nil, fmt.Errorf("map %s: %w", p, err)
 		}
 		tiles := int(width) * int(height)
 		maps = append(maps, &world.Map{
@@ -230,6 +236,21 @@ func Compile(archetypes map[string]*Archetype, files map[string]*MapFile, digest
 		}
 	}
 	return w, nil
+}
+
+// maxDimension bounds a map side; authored maps are far smaller.
+const maxDimension = 4096
+
+func dimension(h Attrs, key string) (int32, error) {
+	value, ok := h[key]
+	if !ok {
+		return 0, fmt.Errorf("missing %s", key)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n <= 0 || n > maxDimension {
+		return 0, fmt.Errorf("invalid %s %q", key, value)
+	}
+	return int32(n), nil
 }
 
 func linkSeams(w *world.World, m *world.Map, header Attrs) {

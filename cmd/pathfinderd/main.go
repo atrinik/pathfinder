@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -35,11 +36,16 @@ func run(args []string) error {
 	contentRoot := flags.String("content", "", "content checkout holding arch/ and maps/ (required)")
 	listen := flags.String("listen", "127.0.0.1:7843", "TCP address to serve gRPC on")
 	maxExpanded := flags.Int("max-expanded", server.DefaultLimits.MaxExpanded, "upper bound on states one path search may expand")
+	maxConcurrent := flags.Int("max-concurrent", runtime.GOMAXPROCS(0),
+		"searches run at once; each holds about 17 bytes per world tile, and more are rejected as RESOURCE_EXHAUSTED")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *contentRoot == "" {
 		return errors.New("-content is required")
+	}
+	if *maxConcurrent < 1 {
+		return errors.New("-max-concurrent must be at least 1")
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
@@ -58,7 +64,7 @@ func run(args []string) error {
 		return err
 	}
 	grpcServer := grpc.NewServer()
-	pb.RegisterPathfinderServiceServer(grpcServer, server.New(search.NewEngine(w), limits))
+	pb.RegisterPathfinderServiceServer(grpcServer, server.New(search.NewEngine(w, *maxConcurrent), limits))
 	healthServer := health.NewServer()
 	healthServer.SetServingStatus(pb.PathfinderService_ServiceDesc.ServiceName, healthpb.HealthCheckResponse_SERVING)
 	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)

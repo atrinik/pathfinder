@@ -1,6 +1,7 @@
 package search_test
 
 import (
+	"context"
 	"os"
 	"sync"
 	"testing"
@@ -37,7 +38,7 @@ func requireRealWorld(t testing.TB) *world.World {
 
 func TestRealContentTravelsBetweenTownsAndFarms(t *testing.T) {
 	w := requireRealWorld(t)
-	e := search.NewEngine(w)
+	e := search.NewEngine(w, 4)
 	for _, tc := range []struct {
 		name     string
 		from     string
@@ -63,7 +64,7 @@ func TestRealContentTravelsBetweenTownsAndFarms(t *testing.T) {
 		if !found {
 			t.Fatalf("%s: nothing walkable on %s", tc.name, tc.from)
 		}
-		r, err := e.FindPath(search.Query{Start: search.Position{Map: start, X: sx, Y: sy}, GoalMap: goal})
+		r, err := e.FindPath(context.Background(), search.Query{Start: search.Position{Map: start, X: sx, Y: sy}, GoalMap: goal})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -94,13 +95,13 @@ func nearestWalkable(m *world.Map, x, y int32) (int32, int32, bool) {
 
 func BenchmarkRealContentInnToFarm(b *testing.B) {
 	w := requireRealWorld(b)
-	e := search.NewEngine(w)
+	e := search.NewEngine(w, 4)
 	start, _ := w.Lookup("/shattered_islands/world_6_48_1")
 	goal, _ := w.Lookup("/shattered_islands/world_1_50")
 	sx, sy, _ := nearestWalkable(start, 1, 12)
 	b.ReportAllocs()
 	for b.Loop() {
-		if r, _ := e.FindPath(search.Query{Start: search.Position{Map: start, X: sx, Y: sy}, GoalMap: goal}); r.Status != search.Found {
+		if r, _ := e.FindPath(context.Background(), search.Query{Start: search.Position{Map: start, X: sx, Y: sy}, GoalMap: goal}); r.Status != search.Found {
 			b.Fatal(r.Status)
 		}
 	}

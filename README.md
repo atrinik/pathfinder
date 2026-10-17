@@ -27,12 +27,13 @@ The contract is [`proto/atrinik/pathfinder/v1/pathfinder.proto`](proto/atrinik/p
 protocol.
 
 - `FindPath(start, goal_tile | goal_map, agent, blocked, max_expanded)` returns
-  the steps (`START`, `WALK`, `SEAM`, `EXIT`) and their cost. Every move costs
+  the shortest steps (`START`, `WALK`, `SEAM`, `EXIT`) and their cost. Every move costs
   one, diagonal or not; so do a seam crossing and an exit. An automatic exit
   (triggered by stepping on it) is reported as the walk onto its tile followed
   by the exit; an applied exit is used from the tile the agent stands on.
-  Nobody can stop on an automatic exit, so it is never a goal tile: ask for
-  its destination map instead.
+  Nobody can stop on an automatic exit, so it is never a goal tile (ask for
+  its destination map instead); a path that starts on one, or arrives on one
+  through another exit, continues through it.
 - `AgentProfile` selects the terrain bits the agent can stand on (walking by
   default), the keys it carries, the diagonal corner policy (`STRICT` by
   default: both orthogonal neighbours must be passable), whether it must stay
@@ -63,7 +64,10 @@ archetype's. The movement model compiles:
   up or down;
 - **seams**: `tile_path_1` … `tile_path_8` (north, east, south, west, then the
   four diagonals), and for coordinate-named maps such as `world_1_50` or
-  `world_6_48_-2` the existing neighbours of the same level.
+  `world_6_48_-2` (two or three integers of at most three digits ending the
+  name) the existing neighbours of the same level.
+
+A map without a positive `width` and `height` fails the load with its path.
 
 ## Build and run
 
@@ -76,7 +80,10 @@ go build ./cmd/pathfinderd
 
 The server listens on loopback by default. Each search uses scratch space
 proportional to the world (about 17 bytes per tile, roughly 35 MB for the
-current content), retained per concurrent search.
+current content). At most `-max-concurrent` searches (the CPU count by
+default) run at once, each with its own retained scratch; further requests
+are rejected with `RESOURCE_EXHAUSTED` rather than allocating more. A
+canceled or expired request stops its search.
 
 ## Development
 

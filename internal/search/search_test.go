@@ -1,6 +1,8 @@
 package search_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -17,7 +19,7 @@ func engine(t testing.TB, c *fixture.Content) (*search.Engine, *world.World) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return search.NewEngine(w), w
+	return search.NewEngine(w, 4), w
 }
 
 func at(t testing.TB, w *world.World, path string, x, y int32) search.Position {
@@ -31,7 +33,7 @@ func at(t testing.TB, w *world.World, path string, x, y int32) search.Position {
 
 func find(t testing.TB, e *search.Engine, q search.Query) search.Result {
 	t.Helper()
-	r, err := e.FindPath(q)
+	r, err := e.FindPath(context.Background(), q)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,8 +224,84 @@ func TestGoalMapBlockedTilesAndLimits(t *testing.T) {
 	if r.Status != search.LimitReached {
 		t.Fatalf("limit: %v", r.Status)
 	}
-	if _, err := e.FindPath(search.Query{Start: at(t, w, "/w/world_0_0", 0, 1)}); err == nil {
+	if _, err := e.FindPath(context.Background(), search.Query{Start: at(t, w, "/w/world_0_0", 0, 1)}); err == nil {
 		t.Fatal("a query needs exactly one goal")
+	}
+}
+
+func TestExitShortcutsOnTheGoalMapStillGiveTheShortestPath(t *testing.T) {
+	// An applied exit at (0,1) lands at (9,0), one move from the goal at
+	// (10,0): 3 moves instead of the 10-move corridor. Chebyshev distance
+	// alone would overestimate from the exit tile and miss it.
+	c := fixture.New(t)
+	c.Map("/t/corridor", "...........", "...........").
+		Object("portal", 0, 1, "slaying /t/corridor", "hp 9", "sp 0")
+	e, w := engine(t, c)
+	goal := at(t, w, "/t/corridor", 10, 0)
+	r := find(t, e, search.Query{Start: at(t, w, "/t/corridor", 0, 0), GoalTile: &goal})
+	if r.Status != search.Found || r.Cost != 3 {
+		t.Fatalf("status %v cost %d %s", r.Status, r.Cost, tiles(r))
+	}
+}
+
+func TestAutomaticExitTilesAreNeverWhereAPathEnds(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/t/hall", "....", "....").
+		Object("teleporter", 3, 0, "slaying /t/far", "hp 0", "sp 0").
+		Object("portal", 0, 1, "slaying /t/hall", "hp 3", "sp 0")
+	c.Map("/t/far", "..", "..")
+	e, w := engine(t, c)
+	teleporter := at(t, w, "/t/hall", 3, 0)
+	if r := find(t, e, search.Query{Start: at(t, w, "/t/hall", 0, 0), GoalTile: &teleporter}); r.Status != search.NoPath {
+		t.Fatalf("an automatic exit is not a goal: %v %s", r.Status, tiles(r))
+	}
+	// Starting on the teleporter carries the agent away first.
+	far := at(t, w, "/t/far", 1, 1)
+	r := find(t, e, search.Query{Start: teleporter, GoalTile: &far})
+	if r.Status != search.Found || r.Steps[1].Kind != search.ExitUsed || !r.Steps[1].Automatic {
+		t.Fatalf("start on a teleporter: %v %s", r.Status, tiles(r))
+	}
+	// An exit arriving on the teleporter chains through it.
+	r = find(t, e, search.Query{Start: at(t, w, "/t/hall", 0, 1), GoalTile: &far, Agent: search.Agent{Corners: search.NoDiagonals}})
+	// Portal, the teleporter it lands on, then two orthogonal moves.
+	if r.Status != search.Found || r.Cost != 4 {
+		t.Fatalf("exit onto a teleporter: %v cost %d %s", r.Status, r.Cost, tiles(r))
+	}
+	hall, _ := w.Lookup("/t/hall")
+	if r := find(t, e, search.Query{Start: at(t, w, "/t/hall", 0, 0), GoalMap: hall}); r.Status != search.Found || r.Cost != 0 {
+		t.Fatalf("the start already satisfies its goal map: %v %d", r.Status, r.Cost)
+	}
+}
+
+func TestSearchesHonourCancellationLimitsAndSlots(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/w/world_0_0", "...", "...", "...")
+	c.Map("/w/world_1_0", "...", "...", "...")
+	w, err := content.Load(c.Write())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := search.NewEngine(w, 1)
+	east, _ := w.Lookup("/w/world_1_0")
+	q := search.Query{Start: at(t, w, "/w/world_0_0", 0, 1), GoalMap: east}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := e.FindPath(canceled, q); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a canceled context stops the search: %v", err)
+	}
+	q.MaxExpanded = 2
+	r, err := e.FindPath(context.Background(), q)
+	if err != nil || r.Status != search.LimitReached || r.Expanded != 2 {
+		t.Fatalf("limit: %v %v expanded %d", r.Status, err, r.Expanded)
+	}
+	// With its only slot held, the engine rejects instead of allocating.
+	release := search.HoldSlot(e)
+	if _, err := e.FindPath(context.Background(), q); !errors.Is(err, search.ErrBusy) {
+		t.Fatalf("saturated engine: %v", err)
+	}
+	release()
+	if _, err := e.FindPath(context.Background(), q); err != nil {
+		t.Fatalf("after release: %v", err)
 	}
 }
 
@@ -235,14 +313,18 @@ func TestConcurrentQueriesShareTheEngineSafely(t *testing.T) {
 	}
 	rows[20] = "#######################################."
 	c.Map("/t/field", rows...)
-	e, w := engine(t, c)
+	w, err := content.Load(c.Write())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := search.NewEngine(w, 32)
 	goal := at(t, w, "/t/field", 0, 39)
 	var wg sync.WaitGroup
 	for i := range 32 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r, err := e.FindPath(search.Query{Start: at(t, w, "/t/field", int32(i), 0), GoalTile: &goal})
+			r, err := e.FindPath(context.Background(), search.Query{Start: at(t, w, "/t/field", int32(i), 0), GoalTile: &goal})
 			if err != nil || r.Status != search.Found {
 				t.Errorf("query %d: %v %v", i, r.Status, err)
 			}
@@ -269,7 +351,7 @@ func BenchmarkOpenField(b *testing.B) {
 	start, goal := at(b, w, "/b/field", 0, 1), at(b, w, "/b/field", 199, 199)
 	b.ReportAllocs()
 	for b.Loop() {
-		if r, _ := e.FindPath(search.Query{Start: start, GoalTile: &goal}); r.Status != search.Found {
+		if r, _ := e.FindPath(context.Background(), search.Query{Start: start, GoalTile: &goal}); r.Status != search.Found {
 			b.Fatal(r.Status)
 		}
 	}
@@ -291,7 +373,7 @@ func BenchmarkTiledWorld(b *testing.B) {
 	start, goal := at(b, w, "/b/world_0_0", 0, 0), at(b, w, "/b/world_9_9", 23, 23)
 	b.ReportAllocs()
 	for b.Loop() {
-		if r, _ := e.FindPath(search.Query{Start: start, GoalTile: &goal}); r.Status != search.Found {
+		if r, _ := e.FindPath(context.Background(), search.Query{Start: start, GoalTile: &goal}); r.Status != search.Found {
 			b.Fatal(r.Status)
 		}
 	}
