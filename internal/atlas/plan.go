@@ -100,6 +100,7 @@ type Planner struct {
 type scratch struct {
 	start, goal, leg gridSearch
 	dist, parent     []int32
+	via              []int32 // the index in a.Out[parent] of the edge taken
 	origin           []int32 // the seam start a seeded connector came from, or -1
 	stamp            []uint32
 	gen              uint32
@@ -116,6 +117,7 @@ func (s *scratch) prepareConnectors(n int) {
 	if len(s.dist) < n {
 		s.dist = make([]int32, n)
 		s.parent = make([]int32, n)
+		s.via = make([]int32, n)
 		s.origin = make([]int32, n)
 		s.stamp = make([]uint32, n)
 		s.gen = 0
@@ -284,13 +286,16 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 	// Dijkstra over connectors from the start's reachable connectors.
 	s := p.s
 	s.prepareConnectors(len(a.Connectors))
-	push := func(id, cost, from, origin int32) {
+	// via is the index of the edge taken in a.Out[from], so assembly reads
+	// each hop's edge directly instead of searching for it again.
+	pushVia := func(id, cost, from, via, origin int32) {
 		if s.stamp[id] == s.gen && s.dist[id] <= cost {
 			return
 		}
-		s.stamp[id], s.dist[id], s.parent[id], s.origin[id] = s.gen, cost, from, origin
+		s.stamp[id], s.dist[id], s.parent[id], s.via[id], s.origin[id] = s.gen, cost, from, via, origin
 		s.open.push(tileNode{cost: cost, tile: id})
 	}
+	push := func(id, cost, from, origin int32) { pushVia(id, cost, from, -1, origin) }
 	// The start's own tile may be a connector nothing else walks to: an
 	// automatic exit, which is then the only way on, or an applied exit on a
 	// tile nobody can enter.
@@ -370,7 +375,7 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 			}
 			// Costs from a damaged atlas file must not wrap around.
 			if total := int64(n.cost) + int64(e.Cost); total < math.MaxInt32 {
-				push(e.To, int32(total), n.tile, -1)
+				pushVia(e.To, int32(total), n.tile, int32(k), -1)
 			}
 		}
 	}
@@ -645,7 +650,7 @@ func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, start
 			}
 		}
 		u, v := chain[i], chain[i+1]
-		edge := a.edge(u, v)
+		edge := a.Out[u][p.s.via[v]]
 		cu, cv := a.Connectors[u], a.Connectors[v]
 		mu, mv := a.World.Maps[cu.Map], a.World.Maps[cv.Map]
 		switch edge.Kind {
@@ -733,18 +738,6 @@ func (p *planner) walk(plan *Plan, m *world.Map, path []int32, spacing int32) er
 		})
 	}
 	return nil
-}
-
-// edge returns the cheapest edge from u to v.
-func (a *Atlas) edge(u, v int32) Edge {
-	var best Edge
-	found := false
-	for _, e := range a.Out[u] {
-		if e.To == v && (!found || e.Cost < best.Cost) {
-			best, found = e, true
-		}
-	}
-	return best
 }
 
 // simplify picks the indexes (after the first) of a tile path to keep as
