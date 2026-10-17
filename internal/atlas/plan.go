@@ -689,6 +689,11 @@ func simplify(ctx context.Context, m *world.Map, path []int32, spacing int32, s 
 	out := s.kept[:0]
 	last := 0
 	for i := 1; i < len(path); i++ {
+		if i%cancelCheckInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if !keep[i] {
 			continue
 		}

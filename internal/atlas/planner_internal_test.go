@@ -97,3 +97,20 @@ func TestSimplificationIsWindowedAndCancellable(t *testing.T) {
 		t.Fatalf("canceled simplification: %v", err)
 	}
 }
+
+func TestSimplificationStopsWhenCanceledInItsFinalPass(t *testing.T) {
+	// Road and plain alternate, so every stretch is one tile long and no
+	// RDP window runs: only the final pass sees the whole path.
+	m := openMap(1, 4000)
+	var path []int32
+	for y := int32(0); y < 4000; y++ {
+		tile := m.Tile(0, y)
+		m.Road[tile] = y%2 == 0
+		path = append(path, tile)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := simplify(ctx, m, path, 1, &scratch{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled final pass: %v", err)
+	}
+}
