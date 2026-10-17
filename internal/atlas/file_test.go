@@ -108,6 +108,39 @@ func TestMalformedAtlasFilesAreRejected(t *testing.T) {
 		"edge target": func(f *atlasv1.Atlas) { firstEdge(f).To = uint32(len(f.Connectors)) },
 		"edge cost":   func(f *atlasv1.Atlas) { firstEdge(f).Cost = 0 },
 		"edge kind":   func(f *atlasv1.Atlas) { firstEdge(f).Kind = 9 },
+		"exit retargeted": func(f *atlasv1.Atlas) {
+			for _, c := range f.Connectors {
+				for _, e := range c.Edges {
+					if e.Kind == atlasv1.EdgeKind_EDGE_KIND_EXIT {
+						e.To = (e.To + 1) % uint32(len(f.Connectors))
+						return
+					}
+				}
+			}
+		},
+		"exit dropped": func(f *atlasv1.Atlas) {
+			for _, c := range f.Connectors {
+				for i, e := range c.Edges {
+					if e.Kind == atlasv1.EdgeKind_EDGE_KIND_EXIT {
+						c.Edges = append(c.Edges[:i], c.Edges[i+1:]...)
+						return
+					}
+				}
+			}
+		},
+		"walk cost below bound": func(f *atlasv1.Atlas) {
+			for _, c := range f.Connectors {
+				for _, e := range c.Edges {
+					if e.Kind == atlasv1.EdgeKind_EDGE_KIND_WALK {
+						e.Cost = 1
+						return
+					}
+				}
+			}
+		},
+		"extra connector": func(f *atlasv1.Atlas) {
+			f.Connectors = append(f.Connectors, f.Connectors[len(f.Connectors)-1])
+		},
 		"walk across maps": func(f *atlasv1.Atlas) {
 			for _, c := range f.Connectors {
 				for _, e := range c.Edges {
@@ -145,4 +178,28 @@ func firstEdge(f *atlasv1.Atlas) *atlasv1.Edge {
 		}
 	}
 	panic("no edges")
+}
+
+func TestAtlasFilesCannotWalkBetweenComponents(t *testing.T) {
+	// A wall splits the hall; each half has a portal to the yard.
+	c := fixture.New(t)
+	c.Map("/t/hall", ".#.").
+		Object("portal", 0, 0, "slaying /t/yard", "hp 0", "sp 0").
+		Object("portal", 2, 0, "slaying /t/yard", "hp 1", "sp 0")
+	c.Map("/t/yard", "..")
+	w, err := content.Load(c.Write())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := atlas.Build(w)
+	hall, _ := w.Lookup("/t/hall")
+	west, _ := a.Lookup(hall, 0, 0)
+	east, _ := a.Lookup(hall, 2, 0)
+	f := a.Encode()
+	f.Connectors[west].Edges = append(f.Connectors[west].Edges, &atlasv1.Edge{
+		To: uint32(east), Cost: 6, Kind: atlasv1.EdgeKind_EDGE_KIND_WALK,
+	})
+	if _, err := atlas.Decode(w, f); err == nil {
+		t.Fatal("accepted a walk through a wall")
+	}
 }

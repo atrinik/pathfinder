@@ -13,6 +13,7 @@
 package atlas
 
 import (
+	"context"
 	"runtime"
 	"sort"
 	"sync"
@@ -253,8 +254,17 @@ func (a *Atlas) addSeamConnectors(m *world.Map) {
 		for _, b := range borderTiles(m, dir) {
 			tile := m.Tile(b[0], b[1])
 			n, nx, ny, ok := w.Step(m, b[0], b[1], d[0], d[1])
-			if !ok || !standable(m, tile) || !standable(n, n.Tile(nx, ny)) {
+			if !ok || !standable(m, tile) || !a.cornersOpen(m, b[0], b[1], d) {
 				flush()
+				continue
+			}
+			if dest := n.Tile(nx, ny); !standable(n, dest) {
+				flush()
+				if passable(n, dest) && isAutomaticExitTile(n, dest) {
+					// Stepping across onto an automatic exit takes it at
+					// once; each such tile leads somewhere of its own.
+					runs = append(runs, []pair{{b[0], b[1], nx, ny, a.Components[m.Index][tile], -1}})
+				}
 				continue
 			}
 			k := [2]int32{a.Components[m.Index][tile], a.Components[n.Index][n.Tile(nx, ny)]}
@@ -273,6 +283,22 @@ func (a *Atlas) addSeamConnectors(m *world.Map) {
 			a.pending = append(a.pending, transition{from: from, to: to, kind: SeamEdge})
 		}
 	}
+}
+
+// cornersOpen reports whether a strict-corner walker may take the step d
+// from (x, y): a diagonal needs both orthogonal neighbours, on whichever map
+// they lie, passable.
+func (a *Atlas) cornersOpen(m *world.Map, x, y int32, d [2]int32) bool {
+	if d[0] == 0 || d[1] == 0 {
+		return true
+	}
+	for _, step := range [2][2]int32{{d[0], 0}, {0, d[1]}} {
+		om, ox, oy, ok := a.World.Step(m, x, y, step[0], step[1])
+		if !ok || !passable(om, om.Tile(ox, oy)) {
+			return false
+		}
+	}
+	return true
 }
 
 // borderTiles lists the tiles of m on the side facing dir, in order.
@@ -361,7 +387,7 @@ func (a *Atlas) addWalks() {
 				if fc.Component < 0 {
 					continue // nobody walks away from an automatic exit
 				}
-				g.run(m, m.Tile(fc.X, fc.Y))
+				_ = g.run(context.Background(), m, m.Tile(fc.X, fc.Y))
 				for _, to := range members {
 					if to == from {
 						continue

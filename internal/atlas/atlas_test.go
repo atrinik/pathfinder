@@ -143,6 +143,92 @@ func TestAutomaticExitsAreSteppedOnto(t *testing.T) {
 	}
 }
 
+func TestPlansFromExitTilesUseThemFirst(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/t/town", ".....").
+		Object("teleporter", 2, 0, "slaying /t/cellar", "hp 0", "sp 0").
+		Object("portal", 4, 0, "slaying /t/inn", "hp 0", "sp 0")
+	c.Map("/t/cellar", "..")
+	c.Map("/t/inn", "..")
+	a, w := build(t, c)
+	cellar, _ := w.Lookup("/t/cellar")
+	inn, _ := w.Lookup("/t/inn")
+	onTeleporter := at(t, w, "/t/town", 2, 0)
+	// A walker on a teleporter is carried off at once.
+	p := plan(t, a, atlas.Request{Start: onTeleporter, GoalMap: cellar})
+	if !p.Found || kinds(p) != "start exit goal" || !p.Waypoints[1].Automatic || p.Waypoints[1].X != 2 {
+		t.Fatalf("from the teleporter: %s", describe(p))
+	}
+	beside := at(t, w, "/t/town", 3, 0)
+	for name, r := range map[string]atlas.Request{
+		"walk away":       {Start: onTeleporter, GoalTile: &beside},
+		"other exit":      {Start: onTeleporter, GoalMap: inn},
+		"stay on the map": {Start: onTeleporter, GoalMap: onTeleporter.Map},
+		"stand on it":     {Start: onTeleporter, GoalTile: &onTeleporter},
+	} {
+		if p := plan(t, a, r); p.Found {
+			t.Errorf("%s: planned %s", name, describe(p))
+		}
+	}
+	// On a portal, the start keeps its own waypoint before the exit.
+	p = plan(t, a, atlas.Request{Start: at(t, w, "/t/town", 4, 0), GoalMap: inn})
+	if !p.Found || kinds(p) != "start exit goal" || p.Waypoints[1].X != 4 || p.Waypoints[1].Automatic {
+		t.Fatalf("from the portal: %s", describe(p))
+	}
+}
+
+func TestSeamCrossingsFollowCornerAndExitRules(t *testing.T) {
+	// Diagonal neighbours touch only at a corner: a strict-corner walker
+	// needs both orthogonal neighbours to step across.
+	c := fixture.New(t)
+	c.Map("/w/world_0_0", "...", "...", "...")
+	c.Map("/w/world_1_1", "...", "...", "...")
+	a, w := build(t, c)
+	far, _ := w.Lookup("/w/world_1_1")
+	if p := plan(t, a, atlas.Request{Start: at(t, w, "/w/world_0_0", 1, 1), GoalMap: far}); p.Found {
+		t.Fatalf("crossed a bare corner: %s", describe(p))
+	}
+	c.Map("/w/world_1_0", "...", "...", "...")
+	c.Map("/w/world_0_1", "...", "...", "...")
+	a, w = build(t, c)
+	far, _ = w.Lookup("/w/world_1_1")
+	if p := plan(t, a, atlas.Request{Start: at(t, w, "/w/world_0_0", 1, 1), GoalMap: far}); !p.Found {
+		t.Fatal("no route once the corner is open")
+	}
+
+	// Stepping across a seam onto a teleporter takes it.
+	c = fixture.New(t)
+	c.Map("/w/world_0_0", "...")
+	c.Map("/w/world_1_0", "#").Object("teleporter", 0, 0, "slaying /t/cellar", "hp 0", "sp 0")
+	c.Map("/t/cellar", "..")
+	a, w = build(t, c)
+	cellar, _ := w.Lookup("/t/cellar")
+	p := plan(t, a, atlas.Request{Start: at(t, w, "/w/world_0_0", 0, 0), GoalMap: cellar})
+	if p.Found {
+		t.Fatalf("crossed onto a teleporter in a wall: %s", describe(p))
+	}
+	c.Map("/w/world_1_0", ".").Object("teleporter", 0, 0, "slaying /t/cellar", "hp 0", "sp 0")
+	a, w = build(t, c)
+	cellar, _ = w.Lookup("/t/cellar")
+	p = plan(t, a, atlas.Request{Start: at(t, w, "/w/world_0_0", 0, 0), GoalMap: cellar})
+	if !p.Found || kinds(p) != "start seam exit goal" || !p.Waypoints[2].Automatic {
+		t.Fatalf("across onto the teleporter: %s", describe(p))
+	}
+}
+
+func TestWaypointsKeepRoadDetours(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/t/town", "=====", ".....")
+	a, w := build(t, c)
+	goal := at(t, w, "/t/town", 4, 1)
+	p := plan(t, a, atlas.Request{Start: at(t, w, "/t/town", 0, 1), GoalTile: &goal})
+	// The road costs 10 against 12 straight across, and the waypoints must
+	// put the walker on it.
+	if !p.Found || p.Cost != 10 || describe(p) != "start /t/town:0,1 | walk /t/town:1,0 | walk /t/town:3,0 | goal /t/town:4,1" {
+		t.Fatalf("cost %d: %s", p.Cost, describe(p))
+	}
+}
+
 func TestWaypointsStayWithinSpacingAndKeepCorners(t *testing.T) {
 	// An L-shaped corridor: 20 tiles east, then 10 south.
 	rows := []string{strings.Repeat(".", 21)}
@@ -290,8 +376,8 @@ func TestPlansMatchExactSearchWithoutRoads(t *testing.T) {
 			gm := w.Maps[rng.IntN(len(w.Maps))]
 			sx, sy := int32(rng.IntN(int(sm.Width))), int32(rng.IntN(int(sm.Height)))
 			gx, gy := int32(rng.IntN(int(gm.Width))), int32(rng.IntN(int(gm.Height)))
-			if blocked(sm, sx, sy) {
-				continue
+			if tile := sm.Tile(sx, sy); sm.Terrain[tile]&world.TerrainWalk == 0 || sm.Blocked[tile] {
+				continue // starts on passable automatic exits are kept
 			}
 			goal := atlas.Position{Map: gm, X: gx, Y: gy}
 			p := plan(t, a, atlas.Request{Start: atlas.Position{Map: sm, X: sx, Y: sy}, GoalTile: &goal})

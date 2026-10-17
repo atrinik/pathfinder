@@ -43,7 +43,9 @@ protocol.
   `EXIT` tiles to apply (or step onto, when `automatic`), `SEAM` border tiles
   to step across, `ARRIVE` where those land, and `GOAL`. Consecutive
   waypoints on one map are at most `spacing` tiles apart (7 by default), and
-  walking straight between them stays within a tile of the planned route.
+  walking straight between them stays within a tile of the planned route
+  (half a tile on roads, whose entry and exit points are always kept). A
+  plan that starts on an automatic exit begins by taking it.
   Roads cost two thirds of a plain step, so the route follows them where the
   detour pays; `cost` is in thirds of a move and `tiles` counts the moves.
   Agents with other abilities (keys, swimming, staying on one map) use
@@ -89,7 +91,9 @@ The atlas (`internal/atlas`) is the planner's road network:
   `floors/bridge_wood/` or `floors/snow/snow_path/`;
 - **connectors** are the tiles where travel leaves or enters an area: exit
   tiles, exit arrivals, and one crossing per run of border tiles that joins
-  the same two walkable components across a seam;
+  the same two walkable components across a seam (diagonal crossings need
+  both corner tiles passable, and a crossing onto an automatic exit is its
+  own connector);
 - **edges** are exits and seam crossings (cost 3), and walks between every
   pair of connectors in one walkable component of a map, priced by a
   road-weighted Dijkstra search (2 per step between road tiles, 3 otherwise).
@@ -105,7 +109,13 @@ search's routes at the same cost; a seam is crossed at the middle of its run.
 file from the `atlas` command (format
 [`proto/atrinik/pathfinder/atlas/v1/atlas.proto`](proto/atrinik/pathfinder/atlas/v1/atlas.proto)).
 A file is stamped with the content digest and map list and is refused for any
-other content. Files are byte-for-byte reproducible.
+other content. Loading recomputes the connectors, exits and seams (they
+follow cheaply from the content) and requires the file to match them exactly;
+only the costly walks are read, and each must join two connectors of one
+walkable component, so a damaged file cannot produce an impossible route.
+Files are byte-for-byte reproducible. Like path searches, at most
+`-max-concurrent` plans run at once, each reusing its own scratch space, and
+a canceled request stops its plan.
 
 ## Build and run
 
@@ -135,11 +145,11 @@ PATHFINDER_CONTENT=../content go test ./internal/search ./internal/atlas -run Re
 
 On the current content (3,660 maps, 2.08 million tiles), loading takes about
 a second; the 149-step walk from the Asteria inn to the Strakewood Island
-farm takes about 6 ms. The atlas has 9,016 connectors, 76,897 edges and
-35,960 road tiles. Building it takes 32 ms on 32 cores and 240 ms on one;
-loading its 925 KB file takes 40 to 60 ms. Planning the inn-to-farm trip takes
-about 1 ms (49 waypoints over 163 tiles), and the 447-step walk from
-Strakewood town to the farm about 3 ms instead of 31 ms for the precise
+farm takes about 6 ms. The atlas has 8,878 connectors, 74,090 edges and
+35,960 road tiles. Building it takes 35 ms on 32 cores and 250 ms on one;
+loading its 898 KB file takes 29 ms and 50 ms. Planning the inn-to-farm trip
+takes under 1 ms (64 waypoints over 163 tiles), and the 447-step walk from
+Strakewood town to the farm about 2.3 ms instead of 27 ms for the precise
 search; roads lengthen these walks by 5 to 10 %.
 
 Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Provenance is recorded

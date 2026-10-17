@@ -31,14 +31,14 @@ var DefaultLimits = Limits{MaxExpanded: search.DefaultMaxExpanded, MaxBlocked: 4
 // Service serves one loaded world.
 type Service struct {
 	pb.UnimplementedPathfinderServiceServer
-	engine *search.Engine
-	atlas  *atlas.Atlas
-	limits Limits
+	engine  *search.Engine
+	planner *atlas.Planner
+	limits  Limits
 }
 
-// New returns a service over engine and the atlas of the same world.
-func New(engine *search.Engine, a *atlas.Atlas, limits Limits) *Service {
-	return &Service{engine: engine, atlas: a, limits: limits}
+// New returns a service over engine and a planner over the same world.
+func New(engine *search.Engine, planner *atlas.Planner, limits Limits) *Service {
+	return &Service{engine: engine, planner: planner, limits: limits}
 }
 
 func (s *Service) mapOf(path, field string) (*world.Map, error) {
@@ -150,7 +150,7 @@ func (s *Service) FindPath(ctx context.Context, req *pb.FindPathRequest) (*pb.Fi
 // searchError maps an engine error to its gRPC status.
 func searchError(err error) error {
 	switch {
-	case errors.Is(err, search.ErrBusy):
+	case errors.Is(err, search.ErrBusy), errors.Is(err, atlas.ErrBusy):
 		return status.Error(codes.ResourceExhausted, "every search slot is busy; retry shortly")
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return status.FromContextError(err).Err()
@@ -297,7 +297,7 @@ func (s *Service) Plan(ctx context.Context, req *pb.PlanRequest) (*pb.PlanRespon
 			}
 		}
 	}
-	p, err := s.atlas.Plan(ctx, r)
+	p, err := s.planner.Plan(ctx, r)
 	if err != nil {
 		return nil, searchError(err)
 	}
@@ -335,18 +335,19 @@ var waypointKinds = map[atlas.WaypointKind]pb.WaypointKind{
 
 // GetAtlasInfo implements PathfinderService.GetAtlasInfo.
 func (s *Service) GetAtlasInfo(context.Context, *pb.GetAtlasInfoRequest) (*pb.GetAtlasInfoResponse, error) {
-	stats := s.atlas.Stats()
+	a := s.planner.Atlas()
+	stats := a.Stats()
 	source := pb.AtlasSource_ATLAS_SOURCE_BUILT
-	if s.atlas.Loaded {
+	if a.Loaded {
 		source = pb.AtlasSource_ATLAS_SOURCE_FILE
 	}
 	return &pb.GetAtlasInfoResponse{
 		Connectors:     uint32(stats.Connectors),
 		Edges:          uint32(stats.Edges),
 		RoadTiles:      uint32(stats.RoadTiles),
-		ContentDigest:  s.atlas.World.Digest,
+		ContentDigest:  a.World.Digest,
 		Source:         source,
-		DurationMicros: uint64(s.atlas.BuildTime.Microseconds()),
+		DurationMicros: uint64(a.BuildTime.Microseconds()),
 	}, nil
 }
 

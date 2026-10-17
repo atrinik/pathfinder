@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/atrinik/pathfinder/internal/atlas"
 	"github.com/atrinik/pathfinder/internal/search"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -13,6 +14,8 @@ import (
 func TestSearchErrorsMapToStatusCodes(t *testing.T) {
 	for err, want := range map[error]codes.Code{
 		search.ErrBusy:           codes.ResourceExhausted,
+		atlas.ErrBusy:            codes.ResourceExhausted,
+		atlas.ErrInvalid:         codes.InvalidArgument,
 		context.Canceled:         codes.Canceled,
 		context.DeadlineExceeded: codes.DeadlineExceeded,
 		search.ErrInvalid:        codes.InvalidArgument,

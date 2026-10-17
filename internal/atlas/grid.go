@@ -1,6 +1,10 @@
 package atlas
 
-import "github.com/atrinik/pathfinder/internal/world"
+import (
+	"context"
+
+	"github.com/atrinik/pathfinder/internal/world"
+)
 
 // Step costs, in thirds of a move: a step between two road tiles costs
 // RoadStep, any other step PlainStep, and a transition (an exit or a seam
@@ -131,15 +135,25 @@ func (g *gridSearch) cost(tile int32) int32 {
 	return g.dist[tile]
 }
 
+// cancelCheckInterval is how many tiles a search settles between checks of
+// its context.
+const cancelCheckInterval = 1024
+
 // run computes walker costs from source to every standable tile of its
 // component. The source itself need not be standable (an agent can start
-// on a door or exit tile).
-func (g *gridSearch) run(m *world.Map, source int32) {
+// on a door or exit tile). It stops with the context's error when the
+// context ends.
+func (g *gridSearch) run(ctx context.Context, m *world.Map, source int32) error {
 	g.prepare(len(m.Terrain))
 	g.stamp[source], g.dist[source], g.parent[source] = g.gen, 0, -1
 	g.open.push(tileNode{cost: 0, tile: source})
 	open := func(t int32) bool { return standable(m, t) }
-	for len(g.open) > 0 {
+	for settled := 0; len(g.open) > 0; settled++ {
+		if settled%cancelCheckInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		n := g.open.pop()
 		if n.cost != g.dist[n.tile] {
 			continue
@@ -153,6 +167,14 @@ func (g *gridSearch) run(m *world.Map, source int32) {
 			g.open.push(tileNode{cost: c, tile: next})
 		})
 	}
+	return nil
+}
+
+// only reaches source alone: an agent on an automatic exit can only be
+// carried onward by it.
+func (g *gridSearch) only(m *world.Map, source int32) {
+	g.prepare(len(m.Terrain))
+	g.stamp[source], g.dist[source], g.parent[source] = g.gen, 0, -1
 }
 
 // path returns the tiles from the last run's source to tile, inclusive.

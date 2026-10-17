@@ -73,8 +73,54 @@ type Plan struct {
 // ErrInvalid reports a malformed request.
 var ErrInvalid = errors.New("invalid plan request")
 
-// Plan finds the cheapest road-weighted route and returns its waypoints.
+// ErrBusy reports that every plan slot of a Planner is in use.
+var ErrBusy = errors.New("every plan slot is busy")
+
+// Planner runs plans over one atlas with bounded concurrency, reusing each
+// slot's scratch space. It is safe for concurrent use.
+type Planner struct {
+	atlas *Atlas
+	slots chan *scratch
+}
+
+// scratch is the tile search space one plan uses; each grows to the largest
+// map it has searched.
+type scratch struct {
+	start, goal, leg gridSearch
+}
+
+// NewPlanner returns a planner running at most concurrency plans at once.
+func NewPlanner(a *Atlas, concurrency int) *Planner {
+	p := &Planner{atlas: a, slots: make(chan *scratch, max(concurrency, 1))}
+	for range cap(p.slots) {
+		p.slots <- &scratch{}
+	}
+	return p
+}
+
+// Atlas returns the planner's atlas.
+func (p *Planner) Atlas() *Atlas { return p.atlas }
+
+// Plan plans like Atlas.Plan, or fails with ErrBusy when every slot is in
+// use.
+func (p *Planner) Plan(ctx context.Context, r Request) (Plan, error) {
+	var s *scratch
+	select {
+	case s = <-p.slots:
+	default:
+		return Plan{}, ErrBusy
+	}
+	defer func() { p.slots <- s }()
+	return p.atlas.plan(ctx, r, s)
+}
+
+// Plan finds the cheapest road-weighted route and returns its waypoints. It
+// allocates its own scratch space; servers bound their work with a Planner.
 func (a *Atlas) Plan(ctx context.Context, r Request) (Plan, error) {
+	return a.plan(ctx, r, &scratch{})
+}
+
+func (a *Atlas) plan(ctx context.Context, r Request, s *scratch) (Plan, error) {
 	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		return Plan{}, err
@@ -87,15 +133,17 @@ func (a *Atlas) Plan(ctx context.Context, r Request) (Plan, error) {
 	if r.Spacing <= 0 {
 		r.Spacing = DefaultSpacing
 	}
-	p := planner{a: a, r: r}
+	p := planner{a: a, r: r, s: s}
 	return p.run(ctx, started)
 }
 
 type planner struct {
-	a     *Atlas
-	r     Request
-	start gridSearch
-	goal  gridSearch
+	a *Atlas
+	r Request
+	s *scratch
+	// fromExit is set when the start is an automatic exit, which carries the
+	// walker onward at once.
+	fromExit bool
 }
 
 const noConnector = int32(-1)
@@ -104,7 +152,13 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 	a, r := p.a, p.r
 	sm := r.Start.Map
 	startTile := sm.Tile(r.Start.X, r.Start.Y)
-	p.start.run(sm, startTile)
+	start, goalSearch := &p.s.start, &p.s.goal
+	p.fromExit = isAutomaticExitTile(sm, startTile)
+	if p.fromExit {
+		start.only(sm, startTile)
+	} else if err := start.run(ctx, sm, startTile); err != nil {
+		return Plan{}, err
+	}
 
 	// Goal side: walking cost from each goal-map connector to the goal.
 	var goalCost func(id int32) (int32, bool)
@@ -112,26 +166,29 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 	if r.GoalTile != nil {
 		gm := r.GoalTile.Map
 		goalTile := gm.Tile(r.GoalTile.X, r.GoalTile.Y)
-		if !standable(gm, goalTile) && (gm != sm || goalTile != startTile) {
+		// Nobody can stop on an automatic exit, even one they start on.
+		if isAutomaticExitTile(gm, goalTile) || (!standable(gm, goalTile) && (gm != sm || goalTile != startTile)) {
 			return Plan{Duration: time.Since(started)}, nil
 		}
-		p.goal.run(gm, goalTile)
+		if err := goalSearch.run(ctx, gm, goalTile); err != nil {
+			return Plan{}, err
+		}
 		goalCost = func(id int32) (int32, bool) {
 			c := a.Connectors[id]
 			if c.Map != gm.Index || c.Component < 0 {
 				return 0, false
 			}
-			cost := p.goal.cost(gm.Tile(c.X, c.Y))
+			cost := goalSearch.cost(gm.Tile(c.X, c.Y))
 			return cost, cost >= 0
 		}
 		if gm == sm {
-			if direct := p.start.cost(goalTile); direct >= 0 {
+			if direct := start.cost(goalTile); direct >= 0 {
 				best = direct
 			}
 		}
 	} else {
-		if sm == r.GoalMap {
-			return p.assemble(nil, 0, started, 0)
+		if sm == r.GoalMap && !p.fromExit {
+			return p.assemble(ctx, nil, 0, started, 0)
 		}
 		goalCost = func(id int32) (int32, bool) {
 			c := a.Connectors[id]
@@ -150,13 +207,22 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 		dist[id], parent[id] = cost, from
 		open.push(tileNode{cost: cost, tile: id})
 	}
+	if p.fromExit {
+		// Only the exit itself leads on.
+		if id, ok := a.Lookup(sm, r.Start.X, r.Start.Y); ok {
+			push(id, 0, noConnector)
+		}
+	}
 	for _, id := range p.startConnectors() {
+		if p.fromExit {
+			break
+		}
 		c := a.Connectors[id]
 		tile := sm.Tile(c.X, c.Y)
-		cost := p.start.cost(tile)
+		cost := start.cost(tile)
 		if c.Component < 0 {
 			var ok bool
-			if cost, _, ok = p.start.stepOnto(sm, tile); !ok {
+			if cost, _, ok = start.stepOnto(sm, tile); !ok {
 				continue
 			}
 		}
@@ -180,6 +246,8 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 			}
 		}
 		expanded++
+		// (An automatic exit's own connector, such as the start's when the
+		// walker starts on one, is never a goal: it has no component.)
 		if extra, ok := goalCost(n.tile); ok && n.cost+extra < best {
 			best, finish = n.cost+extra, n.tile
 		}
@@ -201,7 +269,7 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
 		chain[i], chain[j] = chain[j], chain[i]
 	}
-	return p.assemble(chain, best, started, expanded)
+	return p.assemble(ctx, chain, best, started, expanded)
 }
 
 func (p *planner) avoided(m int32) bool {
@@ -234,7 +302,7 @@ func (p *planner) startConnectors() []int32 {
 }
 
 // assemble expands a connector chain into waypoints.
-func (p *planner) assemble(chain []int32, cost int32, started time.Time, expanded int) (Plan, error) {
+func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, started time.Time, expanded int) (Plan, error) {
 	a, r := p.a, p.r
 	plan := Plan{Found: true, Cost: cost, Expanded: expanded}
 	add := func(m *world.Map, tile int32, kind WaypointKind) {
@@ -246,7 +314,7 @@ func (p *planner) assemble(chain []int32, cost int32, started time.Time, expande
 	if len(chain) == 0 {
 		if r.GoalTile != nil {
 			// A walk on the start map, possibly to the start itself.
-			path := p.start.path(r.GoalTile.Map.Tile(r.GoalTile.X, r.GoalTile.Y))
+			path := p.s.start.path(r.GoalTile.Map.Tile(r.GoalTile.X, r.GoalTile.Y))
 			p.walk(&plan, sm, path, r.Spacing)
 			plan.Waypoints[len(plan.Waypoints)-1].Kind = Goal
 		}
@@ -258,8 +326,20 @@ func (p *planner) assemble(chain []int32, cost int32, started time.Time, expande
 	}
 	// Start to the first connector.
 	first := a.Connectors[chain[0]]
-	p.walkTo(&plan, &p.start, sm, first, r.Spacing)
-	var scratch gridSearch
+	if !p.fromExit {
+		p.walkTo(&plan, &p.s.start, sm, first, r.Spacing)
+	}
+	leg := &p.s.leg
+	// transition marks the last waypoint as where a transition is used; the
+	// start keeps its own waypoint, so one used from there is added after it.
+	transition := func(kind WaypointKind, automatic bool, label string) {
+		last := plan.Waypoints[len(plan.Waypoints)-1]
+		if last.Kind == Start {
+			plan.Waypoints = append(plan.Waypoints, last)
+		}
+		at := &plan.Waypoints[len(plan.Waypoints)-1]
+		at.Kind, at.Automatic, at.Label = kind, automatic, label
+	}
 	for i := 0; i+1 < len(chain); i++ {
 		u, v := chain[i], chain[i+1]
 		edge := a.edge(u, v)
@@ -267,15 +347,16 @@ func (p *planner) assemble(chain []int32, cost int32, started time.Time, expande
 		mu, mv := a.World.Maps[cu.Map], a.World.Maps[cv.Map]
 		switch edge.Kind {
 		case WalkEdge:
-			scratch.run(mu, mu.Tile(cu.X, cu.Y))
-			p.walkTo(&plan, &scratch, mu, cv, r.Spacing)
+			if err := leg.run(ctx, mu, mu.Tile(cu.X, cu.Y)); err != nil {
+				return Plan{}, err
+			}
+			p.walkTo(&plan, leg, mu, cv, r.Spacing)
 		case ExitEdge:
-			last := &plan.Waypoints[len(plan.Waypoints)-1]
-			last.Kind, last.Automatic, last.Label = UseExit, edge.Automatic, edge.Label
+			transition(UseExit, edge.Automatic, edge.Label)
 			add(mv, mv.Tile(cv.X, cv.Y), Arrive)
 			plan.Tiles++
 		case SeamEdge:
-			plan.Waypoints[len(plan.Waypoints)-1].Kind = CrossSeam
+			transition(CrossSeam, false, "")
 			add(mv, mv.Tile(cv.X, cv.Y), Arrive)
 			plan.Tiles++
 		}
@@ -283,8 +364,10 @@ func (p *planner) assemble(chain []int32, cost int32, started time.Time, expande
 	last := a.Connectors[chain[len(chain)-1]]
 	lm := a.World.Maps[last.Map]
 	if r.GoalTile != nil {
-		scratch.run(lm, lm.Tile(last.X, last.Y))
-		path := scratch.path(r.GoalTile.Map.Tile(r.GoalTile.X, r.GoalTile.Y))
+		if err := leg.run(ctx, lm, lm.Tile(last.X, last.Y)); err != nil {
+			return Plan{}, err
+		}
+		path := leg.path(r.GoalTile.Map.Tile(r.GoalTile.X, r.GoalTile.Y))
 		p.walk(&plan, lm, path, r.Spacing)
 	}
 	plan.Waypoints[len(plan.Waypoints)-1].Kind = Goal
@@ -335,14 +418,30 @@ func (a *Atlas) edge(u, v int32) Edge {
 }
 
 // simplify picks the indexes (after the first) of a tile path to keep as
-// waypoints. Ramer-Douglas-Peucker keeps the points the path bends around by
-// more than a tile, so walking straight between waypoints stays on the
-// chosen route (and its roads); long straight runs are then split so that
-// consecutive waypoints are at most spacing tiles apart.
+// waypoints. Where the path enters or leaves a road both tiles are kept, so
+// a road leg is never replaced by a shortcut across open ground. Within each
+// leg, Ramer-Douglas-Peucker keeps the points the path bends around by more
+// than the tolerance (half a tile on roads, a tile elsewhere), so walking
+// straight between waypoints stays on the chosen route; long straight runs
+// are then split so that consecutive waypoints are at most spacing tiles
+// apart.
 func simplify(m *world.Map, path []int32, spacing int32) []int32 {
 	keep := make([]bool, len(path))
 	keep[0], keep[len(path)-1] = true, true
-	rdp(m, path, 0, len(path)-1, keep)
+	lo := 0
+	for i := 1; i <= len(path); i++ {
+		if i < len(path) && m.Road[path[i]] == m.Road[path[lo]] {
+			continue
+		}
+		// path[lo:i] is one road or off-road leg.
+		keep[lo], keep[i-1] = true, true
+		tolerance := rdpTolerance
+		if m.Road[path[lo]] {
+			tolerance = roadTolerance
+		}
+		rdp(m, path, lo, i-1, keep, tolerance)
+		lo = i
+	}
 	var out []int32
 	last := 0
 	for i := 1; i < len(path); i++ {
@@ -364,11 +463,15 @@ func simplify(m *world.Map, path []int32, spacing int32) []int32 {
 	return out
 }
 
-// rdpTolerance is the largest distance, in tiles, a dropped path point may
-// lie from the straight line between the waypoints around it.
-const rdpTolerance = 1.0
+// rdpTolerance and roadTolerance are the largest distances, in tiles, a
+// dropped path point may lie from the straight line between the waypoints
+// around it, off and on roads.
+const (
+	rdpTolerance  = 1.0
+	roadTolerance = 0.5
+)
 
-func rdp(m *world.Map, path []int32, lo, hi int, keep []bool) {
+func rdp(m *world.Map, path []int32, lo, hi int, keep []bool, tolerance float64) {
 	if hi-lo < 2 {
 		return
 	}
@@ -389,10 +492,10 @@ func rdp(m *world.Map, path []int32, lo, hi int, keep []bool) {
 			worst, at = d, i
 		}
 	}
-	if worst > rdpTolerance {
+	if worst > tolerance {
 		keep[at] = true
-		rdp(m, path, lo, at, keep)
-		rdp(m, path, at, hi, keep)
+		rdp(m, path, lo, at, keep, tolerance)
+		rdp(m, path, at, hi, keep, tolerance)
 	}
 }
 
