@@ -366,6 +366,24 @@ func TestRoadSegmentsStayOnTheRoad(t *testing.T) {
 	}
 }
 
+func TestSeamStartsOntoTeleportersSearchNothingThere(t *testing.T) {
+	rows := []string{}
+	for range 30 {
+		rows = append(rows, strings.Repeat(".", 30))
+	}
+	c := fixture.New(t)
+	c.Map("/w/world_0_0", "#")
+	c.Map("/w/world_1_0", rows...).Object("teleporter", 0, 0, "slaying /t/cellar", "hp 0", "sp 0")
+	c.Map("/t/cellar", "..")
+	a, w := build(t, c)
+	cellar, _ := w.Lookup("/t/cellar")
+	p := plan(t, a, atlas.Request{Start: at(t, w, "/w/world_0_0", 0, 0), GoalMap: cellar})
+	// The landing map has 900 tiles; none of them need searching.
+	if !p.Found || kinds(p) != "start seam exit goal" || p.Work > 50 {
+		t.Fatalf("work %d: %s", p.Work, describe(p))
+	}
+}
+
 func TestStartsInWallsUseSelfSeams(t *testing.T) {
 	// The east border leads back to the west one.
 	c := fixture.New(t)

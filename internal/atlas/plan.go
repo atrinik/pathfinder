@@ -105,6 +105,7 @@ type scratch struct {
 	open             tileHeap
 	path             []int32 // reconstructed walk legs
 	chain            []int32 // the connector chain of a plan
+	seams            []seamStart
 	keep             []bool  // simplification marks
 	kept             []int32 // simplified waypoint indexes
 }
@@ -221,6 +222,7 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 	}
 	p.budget = p.work
 	p.finishSeam = -1
+	p.seamStarts = p.s.seams[:0]
 	sm := r.Start.Map
 	startTile := sm.Tile(r.Start.X, r.Start.Y)
 	start, goalSearch, side := &p.s.start, &p.s.goal, &p.s.leg
@@ -315,7 +317,9 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 			}
 		}
 		if !standable(sm, startTile) {
-			if err := p.seedSeamStarts(ctx, side, goalTile, &best, push); err != nil {
+			err := p.seedSeamStarts(ctx, side, goalTile, &best, push)
+			p.s.seams = p.seamStarts
+			if err != nil {
 				return Plan{}, err
 			}
 		}
@@ -477,7 +481,9 @@ func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, start
 		transition(CrossSeam, false, "")
 		add(ss.m, ss.tile, Arrive)
 		plan.Tiles++
-		if err := leg.run(ctx, ss.m, ss.tile, &p.work); err != nil {
+		if isAutomaticExitTile(ss.m, ss.tile) {
+			leg.only(ss.m, ss.tile) // it takes the walker on at once
+		} else if err := leg.run(ctx, ss.m, ss.tile, &p.work); err != nil {
 			return Plan{}, err
 		}
 		if len(chain) == 0 {
