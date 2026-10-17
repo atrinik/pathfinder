@@ -209,7 +209,10 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 		err = errLimit
 	}
 	if errors.Is(err, errLimit) {
-		return Plan{LimitReached: true, Expanded: plan.Expanded, Duration: time.Since(started)}, nil
+		return Plan{
+			LimitReached: true, Expanded: plan.Expanded, Work: p.budget,
+			Duration: time.Since(started),
+		}, nil
 	}
 	plan.Work = p.budget - p.work
 	return plan, err
@@ -406,14 +409,18 @@ func (p *planner) seedSeamStarts(ctx context.Context, side *gridSearch, goalTile
 			continue
 		}
 		p.seamStarts = append(p.seamStarts, seamStart{n, dest})
+		if r.GoalMap == n {
+			// Entering the goal map costs the one transition, which nothing
+			// beats; there is nothing to search there.
+			if Transition < *best {
+				*best, p.finishSeam = Transition, int(origin)
+			}
+			continue
+		}
 		if err := side.run(ctx, n, dest, &p.work); err != nil {
 			return err
 		}
 		switch {
-		case r.GoalMap == n:
-			if Transition < *best {
-				*best, p.finishSeam = Transition, int(origin)
-			}
 		case r.GoalTile != nil && r.GoalTile.Map == n:
 			if c := side.cost(goalTile); c >= 0 && Transition+c < *best {
 				*best, p.finishSeam = Transition+c, int(origin)
@@ -482,10 +489,15 @@ func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, start
 		transition(CrossSeam, false, "")
 		add(ss.m, ss.tile, Arrive)
 		plan.Tiles++
-		if isAutomaticExitTile(ss.m, ss.tile) {
+		switch {
+		case isAutomaticExitTile(ss.m, ss.tile):
 			leg.only(ss.m, ss.tile) // it takes the walker on at once
-		} else if err := leg.run(ctx, ss.m, ss.tile, &p.work); err != nil {
-			return Plan{}, err
+		case len(chain) == 0 && r.GoalMap != nil:
+			// Arriving is reaching the goal map.
+		default:
+			if err := leg.run(ctx, ss.m, ss.tile, &p.work); err != nil {
+				return Plan{}, err
+			}
 		}
 		if len(chain) == 0 {
 			if r.GoalTile != nil {

@@ -284,8 +284,8 @@ func TestPlansSpendOneWorkBudget(t *testing.T) {
 	}
 	// Enough for both tile searches, but not for every waypoint.
 	r.MaxExpanded = 2*(11*21+10) + 50
-	if p := plan(t, a, r); p.Found || !p.LimitReached || len(p.Waypoints) != 0 {
-		t.Fatalf("limited: found %v limit %v, %d waypoints", p.Found, p.LimitReached, len(p.Waypoints))
+	if p := plan(t, a, r); p.Found || !p.LimitReached || len(p.Waypoints) != 0 || p.Work != r.MaxExpanded {
+		t.Fatalf("limited: found %v limit %v work %d, %d waypoints", p.Found, p.LimitReached, p.Work, len(p.Waypoints))
 	}
 }
 
@@ -381,6 +381,22 @@ func TestSeamStartsOntoTeleportersSearchNothingThere(t *testing.T) {
 	// The landing map has 900 tiles; none of them need searching.
 	if !p.Found || kinds(p) != "start seam exit goal" || p.Work > 50 {
 		t.Fatalf("work %d: %s", p.Work, describe(p))
+	}
+}
+
+func TestSeamStartsIntoTheGoalMapSearchNothingThere(t *testing.T) {
+	rows := []string{}
+	for range 30 {
+		rows = append(rows, strings.Repeat(".", 30))
+	}
+	c := fixture.New(t)
+	c.Map("/w/world_0_0", "#")
+	c.Map("/w/world_1_0", rows...)
+	a, w := build(t, c)
+	east, _ := w.Lookup("/w/world_1_0")
+	p := plan(t, a, atlas.Request{Start: at(t, w, "/w/world_0_0", 0, 0), GoalMap: east, MaxExpanded: 10})
+	if !p.Found || kinds(p) != "start seam goal" || p.Work > 10 {
+		t.Fatalf("work %d limit %v: %s", p.Work, p.LimitReached, describe(p))
 	}
 }
 
