@@ -232,7 +232,9 @@ func Compile(archetypes map[string]*Archetype, files map[string]*MapFile, digest
 		file := files[m.Path]
 		linkSeams(w, m, file.Header)
 		for _, o := range file.Objects {
-			placeObject(w, m, file.Header, o, archetypes[o.Arch])
+			if err := placeObject(w, m, file.Header, o, archetypes[o.Arch]); err != nil {
+				return nil, fmt.Errorf("map %s: %w", m.Path, err)
+			}
 		}
 	}
 	return w, nil
@@ -287,10 +289,10 @@ func verticalNeighbour(w *world.World, m *world.Map, header Attrs, level int) (*
 	return nil, false
 }
 
-func placeObject(w *world.World, m *world.Map, header Attrs, o *Object, a *Archetype) {
+func placeObject(w *world.World, m *world.Map, header Attrs, o *Object, a *Archetype) error {
 	x, y := int32(o.Attrs.Int("x", 0)), int32(o.Attrs.Int("y", 0))
 	if !m.InBounds(x, y) {
-		return
+		return nil
 	}
 	tile := m.Tile(x, y)
 	objType, _ := attr(o, a, "type")
@@ -305,11 +307,23 @@ func placeObject(w *world.World, m *world.Map, header Attrs, o *Object, a *Arche
 			if !m.InBounds(px, py) {
 				continue
 			}
+			partTile := m.Tile(px, py)
 			partType := part.Attrs["type"]
 			if part.Attrs["no_pass"] == "1" && !passableType(partType) {
-				m.Blocked[m.Tile(px, py)] = true
+				m.Blocked[partTile] = true
 			}
-			m.Terrain[m.Tile(px, py)] |= uint32(part.Attrs.Int("terrain_type", 0))
+			m.Terrain[partTile] |= uint32(part.Attrs.Int("terrain_type", 0))
+			// A multipart door locks every one of its squares: the part's
+			// own slaying, else the placed door's.
+			if partType == typeDoor || partType == typeLockedDoor {
+				key := part.Attrs["slaying"]
+				if key == "" {
+					key, _ = attr(o, a, "slaying")
+				}
+				if key != "" {
+					m.Locks[partTile] = key
+				}
+			}
 		}
 	}
 	switch objType {
@@ -318,8 +332,9 @@ func placeObject(w *world.World, m *world.Map, header Attrs, o *Object, a *Arche
 			m.Locks[tile] = key
 		}
 	case typeExit:
-		addExit(w, m, header, o, a, tile, x, y)
+		return addExit(w, m, header, o, a, tile, x, y)
 	}
+	return nil
 }
 
 func passableType(objType string) bool {
@@ -331,7 +346,7 @@ func blocks(o *Object, a *Archetype, objType string) bool {
 	return value == "1" && !passableType(objType)
 }
 
-func addExit(w *world.World, m *world.Map, header Attrs, o *Object, a *Archetype, tile, x, y int32) {
+func addExit(w *world.World, m *world.Map, header Attrs, o *Object, a *Archetype, tile, x, y int32) error {
 	walkOn, _ := attr(o, a, "walk_on")
 	flyOn, _ := attr(o, a, "fly_on")
 	automatic := walkOn == "1" || flyOn == "1"
@@ -343,25 +358,32 @@ func addExit(w *world.World, m *world.Map, header Attrs, o *Object, a *Archetype
 	if dest != "" {
 		n, ok := w.Lookup(Resolve(m.Path, dest))
 		if !ok {
-			return
+			// Exits into maps outside this checkout (or runtime-generated
+			// ones) cannot be followed; they are not content errors.
+			return nil
 		}
 		ax, ay := int32(attrInt(o, a, "hp", -1)), int32(attrInt(o, a, "sp", -1))
 		if ax < 0 || ay < 0 {
 			ax, ay = n.EnterX, n.EnterY
 		}
+		if !n.InBounds(ax, ay) {
+			return fmt.Errorf("exit %q at (%d, %d) arrives at (%d, %d), outside %s (%dx%d)",
+				label, x, y, ax, ay, n.Path, n.Width, n.Height)
+		}
 		m.Exits[tile] = append(m.Exits[tile], world.Exit{
 			To: n.Index, X: ax, Y: ay, Automatic: automatic, Label: label,
 		})
-		return
+		return nil
 	}
 	// Destination-less stairs lead to the same square one level up or down.
 	level := attrInt(o, a, "last_heal", 0)
 	if level != stairsUp && level != stairsDown {
-		return
+		return nil
 	}
 	if n, ok := verticalNeighbour(w, m, header, level); ok && n.InBounds(x, y) {
 		m.Exits[tile] = append(m.Exits[tile], world.Exit{
 			To: n.Index, X: x, Y: y, Automatic: automatic, Label: label,
 		})
 	}
+	return nil
 }

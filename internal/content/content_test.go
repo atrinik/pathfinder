@@ -154,6 +154,38 @@ func TestCompileLinksSeamsExitsAndStairs(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsExitsArrivingOutsideTheirDestination(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/t/town", "...").Object("portal", 0, 0, "slaying /t/inn", "hp 5", "sp 0")
+	c.Map("/t/inn", "..")
+	_, err := content.Load(c.Write())
+	if err == nil || !strings.Contains(err.Error(), "/t/town") || !strings.Contains(err.Error(), "outside /t/inn") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestMultipartDoorsLockEverySquare(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/t/gate", "...", "...").Object("double_door", 0, 1)
+	root := c.Write()
+	extra := "Object double_door\nname double door\ntype 20\nno_pass 1\nslaying gate_key\nend\nMore\n" +
+		"Object double_door_b\ntype 20\nno_pass 1\nx 1\nend\n"
+	if err := os.WriteFile(filepath.Join(root, "arch", "double_door.arc"), []byte(extra), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := content.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := w.Lookup("/t/gate")
+	if m.Locks[m.Tile(0, 1)] != "gate_key" || m.Locks[m.Tile(1, 1)] != "gate_key" {
+		t.Fatalf("locks = %v", m.Locks)
+	}
+	if m.Blocked[m.Tile(1, 1)] {
+		t.Fatal("a door part is passable with its key")
+	}
+}
+
 func TestLoadRejectsMapsWithoutAValidSize(t *testing.T) {
 	for _, header := range []string{"height 3\n", "width 0\nheight 3\n", "width x\nheight 3\n", "width 99999\nheight 3\n"} {
 		c := fixture.New(t)

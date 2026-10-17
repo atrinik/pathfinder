@@ -47,6 +47,9 @@ func run(args []string) error {
 	if *maxConcurrent < 1 {
 		return errors.New("-max-concurrent must be at least 1")
 	}
+	if *maxExpanded < 1 {
+		return errors.New("-max-expanded must be at least 1")
+	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	started := time.Now()
