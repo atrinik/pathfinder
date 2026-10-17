@@ -69,3 +69,31 @@ func TestExhaustedPlansDoNotSimplify(t *testing.T) {
 		t.Fatal("the path was simplified anyway")
 	}
 }
+
+func TestSimplificationIsWindowedAndCancellable(t *testing.T) {
+	// A long straight corridor, which unwindowed RDP would reduce to its
+	// two ends after scanning it whole.
+	m := openMap(1, 4000)
+	var path []int32
+	for y := int32(0); y < 4000; y++ {
+		path = append(path, m.Tile(0, y))
+	}
+	s := &scratch{}
+	kept, err := simplify(context.Background(), m, path, 1000, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No two kept points are more than a window apart along the path.
+	last := int32(0)
+	for _, i := range kept {
+		if i-last > rdpWindow {
+			t.Fatalf("kept %d after %d: wider than a window", i, last)
+		}
+		last = i
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := simplify(ctx, m, path, 1000, s); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled simplification: %v", err)
+	}
+}

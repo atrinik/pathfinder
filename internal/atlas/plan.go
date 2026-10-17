@@ -171,14 +171,15 @@ func (a *Atlas) plan(ctx context.Context, r Request, s *scratch) (Plan, error) {
 	if r.Spacing <= 0 {
 		r.Spacing = DefaultSpacing
 	}
-	p := planner{a: a, r: r, s: s}
+	p := planner{a: a, r: r, s: s, ctx: ctx}
 	return p.run(ctx, started)
 }
 
 type planner struct {
-	a *Atlas
-	r Request
-	s *scratch
+	a   *Atlas
+	r   Request
+	s   *scratch
+	ctx context.Context
 	// work is the plan's remaining budget: connectors expanded, tiles
 	// searched and waypoints emitted each spend one.
 	work, budget int
@@ -605,7 +606,11 @@ func (p *planner) walk(plan *Plan, m *world.Map, path []int32, spacing int32) er
 		return errLimit
 	}
 	plan.Tiles += int32(len(path) - 1)
-	for _, i := range simplify(m, path, spacing, p.s) {
+	kept, err := simplify(p.ctx, m, path, spacing, p.s)
+	if err != nil {
+		return err
+	}
+	for _, i := range kept {
 		if p.work--; p.work < 0 {
 			return errLimit
 		}
@@ -637,7 +642,11 @@ func (a *Atlas) edge(u, v int32) Edge {
 // are then split so that consecutive waypoints are at most spacing tiles
 // apart. Finally every segment must be walkable in a straight line, so a
 // waypoint is never dropped from a bend that rounds an obstacle.
-func simplify(m *world.Map, path []int32, spacing int32, s *scratch) []int32 {
+//
+// RDP runs over windows of at most rdpWindow path points, each end kept, so
+// its work grows linearly with the path however it winds; the context is
+// checked between windows.
+func simplify(ctx context.Context, m *world.Map, path []int32, spacing int32, s *scratch) ([]int32, error) {
 	keep := s.keep[:0]
 	for range path {
 		keep = append(keep, false)
@@ -655,7 +664,14 @@ func simplify(m *world.Map, path []int32, spacing int32, s *scratch) []int32 {
 		if m.Road[path[lo]] {
 			tolerance = roadTolerance
 		}
-		rdp(m, path, lo, i-1, keep, tolerance)
+		for start := lo; start < i-1; start += rdpWindow {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			end := min(start+rdpWindow, i-1)
+			keep[end] = true
+			rdp(m, path, start, end, keep, tolerance)
+		}
 		lo = i
 	}
 	out := s.kept[:0]
@@ -677,7 +693,7 @@ func simplify(m *world.Map, path []int32, spacing int32, s *scratch) []int32 {
 		last = i
 	}
 	s.kept = out
-	return out
+	return out, nil
 }
 
 // appendWalkable appends the index hi, preceded by whatever points of
@@ -728,6 +744,9 @@ const (
 	rdpTolerance  = 1.0
 	roadTolerance = 0.5
 )
+
+// rdpWindow bounds the path points one RDP pass considers.
+const rdpWindow = 32
 
 func rdp(m *world.Map, path []int32, lo, hi int, keep []bool, tolerance float64) {
 	if hi-lo < 2 {
