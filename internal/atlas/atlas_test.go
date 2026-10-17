@@ -447,6 +447,57 @@ func TestExitsOntoTheGoalSearchNothing(t *testing.T) {
 	}
 }
 
+func TestAppliedExitsOntoTheGoalSearchNothing(t *testing.T) {
+	rows := []string{}
+	for range 30 {
+		rows = append(rows, strings.Repeat(".", 30))
+	}
+	c := fixture.New(t)
+	c.Map("/t/plaza", rows...).Object("portal", 15, 15, "slaying /t/inn", "hp 1", "sp 1")
+	c.Map("/t/inn", "...", "...")
+	a, w := build(t, c)
+	inn, _ := w.Lookup("/t/inn")
+	start := at(t, w, "/t/plaza", 15, 15)
+	goal := at(t, w, "/t/inn", 1, 1)
+	for name, r := range map[string]atlas.Request{
+		"goal tile": {Start: start, GoalTile: &goal, MaxExpanded: 10},
+		"goal map":  {Start: start, GoalMap: inn, MaxExpanded: 10},
+	} {
+		if p := plan(t, a, r); !p.Found || kinds(p) != "start exit goal" || p.Waypoints[1].Automatic || p.Work > 10 {
+			t.Errorf("%s: work %d limit %v: %s", name, p.Work, p.LimitReached, describe(p))
+		}
+	}
+}
+
+func TestDiagonalExitCrossingsServeEveryComponent(t *testing.T) {
+	// Two separate border tiles of world_1_0, split by a teleporter, each
+	// reach the west neighbour's goal teleporter at (2,1) diagonally; the
+	// straight steps land on teleporters into a dead end.
+	c := fixture.New(t)
+	c.Map("/w/world_0_0", "...", "...", "...").
+		Object("teleporter", 2, 0, "slaying /t/void", "hp 0", "sp 0").
+		Object("teleporter", 2, 1, "slaying /t/goal", "hp 0", "sp 0").
+		Object("teleporter", 2, 2, "slaying /t/void", "hp 0", "sp 0")
+	c.Map("/w/world_1_0", ".##", ".##", ".##").
+		Object("teleporter", 0, 1, "slaying /t/void", "hp 0", "sp 0")
+	c.Map("/t/void", ".")
+	c.Map("/t/goal", "..")
+	a, w := build(t, c)
+	goal, _ := w.Lookup("/t/goal")
+	e := search.NewEngine(w, 1)
+	for _, y := range []int32{0, 2} {
+		start := at(t, w, "/w/world_1_0", 0, y)
+		r, err := e.FindPath(context.Background(), search.Query{
+			Start: search.Position{Map: start.Map, X: 0, Y: y}, GoalMap: goal})
+		if err != nil || r.Status != search.Found {
+			t.Fatalf("precise search from %d: %v %v", y, r.Status, err)
+		}
+		if p := plan(t, a, atlas.Request{Start: start, GoalMap: goal}); !p.Found || p.Cost != 3*r.Cost {
+			t.Errorf("from 0,%d: cost %d (precise %d): %s", y, p.Cost, r.Cost, describe(p))
+		}
+	}
+}
+
 func TestStartsInWallsUseSelfSeams(t *testing.T) {
 	// The east border leads back to the west one.
 	c := fixture.New(t)

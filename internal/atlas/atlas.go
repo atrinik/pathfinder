@@ -15,7 +15,6 @@ package atlas
 import (
 	"context"
 	"runtime"
-	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -76,10 +75,8 @@ type Atlas struct {
 	byState map[int32]int32
 	// componentConnectors lists, per map and component, the connectors that
 	// can be walked to from that component (its own, and adjacent automatic
-	// exits); mapConnectors lists those of every component of a map, in id
-	// order.
+	// exits), in id order.
 	componentConnectors []map[int32][]int32
-	mapConnectors       [][]int32
 	stats               Stats
 	// BuildTime is how long building (or loading) the atlas took.
 	BuildTime time.Duration
@@ -139,7 +136,6 @@ func newAtlas(w *world.World) *Atlas {
 		Components:          make([][]int32, len(w.Maps)),
 		byState:             map[int32]int32{},
 		componentConnectors: make([]map[int32][]int32, len(w.Maps)),
-		mapConnectors:       make([][]int32, len(w.Maps)),
 	}
 	parallel(len(w.Maps), func(i int) {
 		a.Components[i], _ = components(w.Maps[i])
@@ -308,11 +304,11 @@ func (a *Atlas) addDiagonalCrossings(m *world.Map, dir world.Direction, runs [][
 	d := world.Deltas[dir]
 	side := [2]int32{d[1], d[0]} // perpendicular to d
 	covered := map[[2]int32]bool{}
-	exits := map[[2]int32]bool{}
+	exits := map[[3]int32]bool{} // landing tile and source component
 	for _, run := range runs {
 		for _, p := range run {
 			if p.to < 0 {
-				exits[[2]int32{p.nx, p.ny}] = true
+				exits[[3]int32{p.nx, p.ny, p.from}] = true
 			} else {
 				covered[[2]int32{p.from, p.to}] = true
 			}
@@ -343,8 +339,8 @@ func (a *Atlas) addDiagonalCrossings(m *world.Map, dir world.Direction, runs [][
 					runs = append(runs, []seamPair{{b[0], b[1], nx, ny, k[0], k[1]}})
 				}
 			case passable(n, dest) && isAutomaticExitTile(n, dest):
-				if !exits[[2]int32{nx, ny}] {
-					exits[[2]int32{nx, ny}] = true
+				if k := [3]int32{nx, ny, from}; !exits[k] {
+					exits[k] = true
 					runs = append(runs, []seamPair{{b[0], b[1], nx, ny, from, -1}})
 				}
 			}
@@ -442,16 +438,6 @@ func (a *Atlas) groupConnectors() {
 			})
 		}
 		a.componentConnectors[i] = groups
-		seen := map[int32]bool{}
-		for _, members := range groups {
-			for _, id := range members {
-				if !seen[id] {
-					seen[id] = true
-					a.mapConnectors[i] = append(a.mapConnectors[i], id)
-				}
-			}
-		}
-		slices.Sort(a.mapConnectors[i])
 	})
 }
 

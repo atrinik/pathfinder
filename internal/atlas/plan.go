@@ -237,10 +237,8 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 		start.only(sm, startTile)
 		return p.assemble(ctx, nil, 0, started, 0)
 	}
-	if p.fromExit && r.GoalTile != nil {
-		if plan, ok := p.exitOntoGoal(startTile, started); ok {
-			return plan, nil
-		}
+	if plan, ok := p.exitOntoGoal(startTile, started); ok {
+		return plan, nil
 	}
 	if p.fromExit {
 		start.only(sm, startTile)
@@ -311,19 +309,10 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 		// Automatic exits beside the start, which perhaps only the start
 		// (on a tile nobody else can stand on) touches.
 		neighbours(sm, startTile, func(t int32) bool { return passable(sm, t) && isAutomaticExitTile(sm, t) }, seedExit)
-		for _, id := range a.mapConnectors[sm.Index] {
-			c := a.Connectors[id]
-			tile := sm.Tile(c.X, c.Y)
-			cost := start.cost(tile)
-			if c.Component < 0 {
-				var ok bool
-				if cost, _, ok = start.stepOnto(sm, tile); !ok {
-					continue
-				}
-			}
-			if cost >= 0 {
-				push(id, cost, noConnector, -1)
-			}
+		if err := p.seedReached(ctx, start, sm, startTile, func(id, cost int32) {
+			push(id, cost, noConnector, -1)
+		}); err != nil {
+			return Plan{}, err
 		}
 		if !standable(sm, startTile) {
 			err := p.seedSeamStarts(ctx, side, goalTile, &best, push)
@@ -441,46 +430,97 @@ func (p *planner) seedSeamStarts(ctx context.Context, side *gridSearch, goalTile
 				*best, p.finishSeam = Transition+c, int(origin)
 			}
 		}
-		for _, id := range a.mapConnectors[n.Index] {
-			c := a.Connectors[id]
-			tile := n.Tile(c.X, c.Y)
-			cost := side.cost(tile)
-			if c.Component < 0 {
-				if cost, _, ok = side.stepOnto(n, tile); !ok {
-					continue
-				}
-			}
-			if cost >= 0 {
-				push(id, Transition+cost, noConnector, origin)
-			}
+		if err := p.seedReached(ctx, side, n, dest, func(id, cost int32) {
+			push(id, Transition+cost, noConnector, origin)
+		}); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// exitOntoGoal answers a start on an automatic exit that lands exactly on
-// the goal tile: the walker is carried there at once, so nothing needs
-// searching.
+// exitOntoGoal answers a start whose own exit lands on the goal map or
+// goal tile: any route there needs at least one transition, so taking it is
+// already best and nothing needs searching. A start on an automatic exit is
+// carried by it; otherwise the start's applied exits are usable from it.
 func (p *planner) exitOntoGoal(startTile int32, started time.Time) (Plan, bool) {
 	r := p.r
-	sm, g := r.Start.Map, r.GoalTile
-	if !standable(g.Map, g.Map.Tile(g.X, g.Y)) {
-		return Plan{}, false
-	}
+	sm := r.Start.Map
 	for _, exit := range sm.Exits[startTile] {
-		if !exit.Automatic || exit.To != g.Map.Index || exit.X != g.X || exit.Y != g.Y {
+		if exit.Automatic != p.fromExit {
+			continue
+		}
+		dest := p.a.World.Maps[exit.To]
+		if dest == sm || !dest.InBounds(exit.X, exit.Y) || !standable(dest, dest.Tile(exit.X, exit.Y)) {
+			continue
+		}
+		switch {
+		case r.GoalMap != nil && dest != r.GoalMap,
+			r.GoalTile != nil && (dest != r.GoalTile.Map || exit.X != r.GoalTile.X || exit.Y != r.GoalTile.Y):
 			continue
 		}
 		start := Waypoint{Map: sm, X: r.Start.X, Y: r.Start.Y, Kind: Start}
 		use := start
-		use.Kind, use.Automatic, use.Label = UseExit, true, exit.Label
+		use.Kind, use.Automatic, use.Label = UseExit, exit.Automatic, exit.Label
 		p.work -= 3
 		return Plan{
 			Found: true, Cost: Transition, Tiles: 1, Duration: time.Since(started),
-			Waypoints: []Waypoint{start, use, {Map: g.Map, X: g.X, Y: g.Y, Kind: Goal}},
+			Waypoints: []Waypoint{start, use, {Map: dest, X: exit.X, Y: exit.Y, Kind: Goal}},
 		}, true
 	}
 	return Plan{}, false
+}
+
+// seedReached offers the connectors walkable from the components a tile
+// search from source reached (the source's own, or, from a tile nobody else
+// can stand on, its neighbours'), with their costs. Each connector looked at
+// spends a unit of work.
+func (p *planner) seedReached(ctx context.Context, g *gridSearch, m *world.Map, source int32,
+	seed func(id, cost int32)) error {
+	labels := p.a.Components[m.Index]
+	var comps [9]int32
+	n := 0
+	addComp := func(c int32) {
+		if c < 0 {
+			return
+		}
+		for _, have := range comps[:n] {
+			if have == c {
+				return
+			}
+		}
+		comps[n] = c
+		n++
+	}
+	addComp(labels[source])
+	neighbours(m, source, func(t int32) bool { return standable(m, t) && g.cost(t) >= 0 }, func(t int32) {
+		addComp(labels[t])
+	})
+	for _, comp := range comps[:n] {
+		for k, id := range p.a.componentConnectors[m.Index][comp] {
+			if k%cancelCheckInterval == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
+			if p.work--; p.work < 0 {
+				return errLimit
+			}
+			c := p.a.Connectors[id]
+			tile := m.Tile(c.X, c.Y)
+			cost := g.cost(tile)
+			if c.Component < 0 {
+				var ok bool
+				if cost, _, ok = g.stepOnto(m, tile); !ok {
+					continue
+				}
+			}
+			if cost >= 0 {
+				seed(id, cost)
+			}
+		}
+	}
+	return nil
 }
 
 func (p *planner) avoided(m int32) bool {
