@@ -24,11 +24,12 @@ func TestPlanOverGRPC(t *testing.T) {
 	for _, wp := range resp.GetWaypoints() {
 		kinds = append(kinds, wp.GetKind())
 	}
-	// Across the seam, to the portal in the corner, through it.
+	// Across the seam, round the wall at (1,1) to the portal in the corner,
+	// through it.
 	want := []pb.WaypointKind{
 		pb.WaypointKind_WAYPOINT_KIND_START, pb.WaypointKind_WAYPOINT_KIND_SEAM,
-		pb.WaypointKind_WAYPOINT_KIND_ARRIVE, pb.WaypointKind_WAYPOINT_KIND_EXIT,
-		pb.WaypointKind_WAYPOINT_KIND_GOAL,
+		pb.WaypointKind_WAYPOINT_KIND_ARRIVE, pb.WaypointKind_WAYPOINT_KIND_WALK,
+		pb.WaypointKind_WAYPOINT_KIND_EXIT, pb.WaypointKind_WAYPOINT_KIND_GOAL,
 	}
 	if resp.GetStatus() != pb.PathStatus_PATH_STATUS_FOUND || len(kinds) != len(want) {
 		t.Fatalf("status %v waypoints %v", resp.GetStatus(), resp.GetWaypoints())
@@ -38,11 +39,11 @@ func TestPlanOverGRPC(t *testing.T) {
 			t.Fatalf("waypoints %v", resp.GetWaypoints())
 		}
 	}
-	exit := resp.GetWaypoints()[3]
+	exit := resp.GetWaypoints()[4]
 	if exit.GetPosition().GetMap() != "/w/world_0_0" || exit.GetPosition().GetX() != 0 || exit.GetLabel() != "portal" || exit.GetAutomatic() {
 		t.Fatalf("exit %v", exit)
 	}
-	if goal := resp.GetWaypoints()[4].GetPosition(); goal.GetMap() != "/w/inn" || goal.GetX() != 1 || goal.GetY() != 1 {
+	if goal := resp.GetWaypoints()[5].GetPosition(); goal.GetMap() != "/w/inn" || goal.GetX() != 1 || goal.GetY() != 1 {
 		t.Fatalf("goal %v", goal)
 	}
 	if resp.GetTiles() == 0 || resp.GetCost() < 2*resp.GetTiles() || resp.GetMetrics().GetExpanded() == 0 {
@@ -65,7 +66,7 @@ func TestPlanOverGRPC(t *testing.T) {
 		Goal:        &pb.PlanRequest_GoalMap{GoalMap: "/w/inn"},
 		MaxExpanded: 1,
 	})
-	if err != nil || resp.GetStatus() != pb.PathStatus_PATH_STATUS_LIMIT_REACHED || resp.GetMetrics().GetExpanded() != 1 {
+	if err != nil || resp.GetStatus() != pb.PathStatus_PATH_STATUS_LIMIT_REACHED || len(resp.GetWaypoints()) != 0 {
 		t.Fatalf("limited: %v %v", resp, err)
 	}
 

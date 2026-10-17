@@ -1171,8 +1171,9 @@ type PlanRequest struct {
 	// Greatest distance, in tiles (Chebyshev), between consecutive waypoints
 	// on one map. Zero selects 7, within the client's click-to-move reach.
 	Spacing uint32 `protobuf:"varint,5,opt,name=spacing,proto3" json:"spacing,omitempty"`
-	// Bound on expanded atlas connectors; zero selects the server default,
-	// and larger values are capped by it.
+	// Bound on the plan's work: each atlas connector expanded, tile searched
+	// and waypoint returned counts one. Zero selects the server default, and
+	// larger values are capped by it.
 	MaxExpanded   uint32 `protobuf:"varint,6,opt,name=max_expanded,json=maxExpanded,proto3" json:"max_expanded,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

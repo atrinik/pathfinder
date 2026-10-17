@@ -55,15 +55,15 @@ type Request struct {
 	GoalMap  *world.Map
 	Avoided  map[int32]bool // map indexes to stay off (start and goal maps exempt)
 	Spacing  int32          // greatest waypoint distance on one map; 0 selects DefaultSpacing
-	// MaxExpanded bounds the connectors one plan expands; zero means no
-	// bound.
+	// MaxExpanded bounds one plan's work: each connector expanded, tile
+	// searched and waypoint emitted spends one. Zero means no bound.
 	MaxExpanded int
 }
 
 // Plan is a planner answer.
 type Plan struct {
 	Found bool
-	// LimitReached is set when the plan stopped at MaxExpanded.
+	// LimitReached is set when the plan spent its MaxExpanded work budget.
 	LimitReached bool
 	Waypoints    []Waypoint
 	// Cost is the road-weighted cost, in thirds of a move.
@@ -92,9 +92,13 @@ type Planner struct {
 type scratch struct {
 	start, goal, leg gridSearch
 	dist, parent     []int32
+	origin           []int32 // the seam start a seeded connector came from, or -1
 	stamp            []uint32
 	gen              uint32
 	open             tileHeap
+	path             []int32 // reconstructed walk legs
+	keep             []bool  // simplification marks
+	kept             []int32 // simplified waypoint indexes
 }
 
 // prepareConnectors readies the connector search for n connectors.
@@ -102,6 +106,7 @@ func (s *scratch) prepareConnectors(n int) {
 	if len(s.dist) < n {
 		s.dist = make([]int32, n)
 		s.parent = make([]int32, n)
+		s.origin = make([]int32, n)
 		s.stamp = make([]uint32, n)
 		s.gen = 0
 	}
@@ -165,36 +170,66 @@ type planner struct {
 	a *Atlas
 	r Request
 	s *scratch
+	// work is the plan's remaining budget: connectors expanded, tiles
+	// searched and waypoints emitted each spend one.
+	work int
 	// fromExit is set when the start is an automatic exit, which carries the
 	// walker onward at once.
 	fromExit bool
+	// seamStarts are the tiles across a seam an agent standing on a tile
+	// nobody else can stand on may step straight onto; finishSeam is the one
+	// a plan ends through without reaching any connector, or -1.
+	seamStarts []seamStart
+	finishSeam int
+}
+
+type seamStart struct {
+	m    *world.Map
+	tile int32
 }
 
 const noConnector = int32(-1)
 
+// errLimit stops a plan that has spent its work budget.
+var errLimit = errors.New("plan work limit reached")
+
 func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
+	plan, err := p.search(ctx, started)
+	if errors.Is(err, errLimit) {
+		return Plan{LimitReached: true, Expanded: plan.Expanded, Duration: time.Since(started)}, nil
+	}
+	return plan, err
+}
+
+func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 	a, r := p.a, p.r
+	p.work = math.MaxInt
+	if r.MaxExpanded > 0 {
+		p.work = r.MaxExpanded
+	}
+	p.finishSeam = -1
 	sm := r.Start.Map
 	startTile := sm.Tile(r.Start.X, r.Start.Y)
-	start, goalSearch := &p.s.start, &p.s.goal
+	start, goalSearch, side := &p.s.start, &p.s.goal, &p.s.leg
 	p.fromExit = isAutomaticExitTile(sm, startTile)
 	if p.fromExit {
 		start.only(sm, startTile)
-	} else if err := start.run(ctx, sm, startTile); err != nil {
+	} else if err := start.run(ctx, sm, startTile, &p.work); err != nil {
 		return Plan{}, err
 	}
 
 	// Goal side: walking cost from each goal-map connector to the goal.
 	var goalCost func(id int32) (int32, bool)
 	best := int32(math.MaxInt32)
+	var goalTile int32
 	if r.GoalTile != nil {
 		gm := r.GoalTile.Map
-		goalTile := gm.Tile(r.GoalTile.X, r.GoalTile.Y)
+		goalTile = gm.Tile(r.GoalTile.X, r.GoalTile.Y)
 		// Nobody can stop on an automatic exit, even one they start on.
 		if isAutomaticExitTile(gm, goalTile) || (!standable(gm, goalTile) && (gm != sm || goalTile != startTile)) {
 			return Plan{Duration: time.Since(started)}, nil
 		}
-		if err := goalSearch.run(ctx, gm, goalTile); err != nil {
+		if err := goalSearch.run(ctx, gm, goalTile, &p.work); err != nil {
 			return Plan{}, err
 		}
 		goalCost = func(id int32) (int32, bool) {
@@ -223,18 +258,18 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 	// Dijkstra over connectors from the start's reachable connectors.
 	s := p.s
 	s.prepareConnectors(len(a.Connectors))
-	push := func(id, cost, from int32) {
+	push := func(id, cost, from, origin int32) {
 		if s.stamp[id] == s.gen && s.dist[id] <= cost {
 			return
 		}
-		s.stamp[id], s.dist[id], s.parent[id] = s.gen, cost, from
+		s.stamp[id], s.dist[id], s.parent[id], s.origin[id] = s.gen, cost, from, origin
 		s.open.push(tileNode{cost: cost, tile: id})
 	}
 	// The start's own tile may be a connector nothing else walks to: an
 	// automatic exit, which is then the only way on, or an applied exit on a
 	// tile nobody can enter.
 	if id, ok := a.Lookup(sm, r.Start.X, r.Start.Y); ok {
-		push(id, 0, noConnector)
+		push(id, 0, noConnector, -1)
 	}
 	seedExit := func(tile int32) {
 		id, ok := a.Lookup(sm, tile%sm.Width, tile/sm.Width)
@@ -242,29 +277,31 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 			return
 		}
 		if cost, _, ok := start.stepOnto(sm, tile); ok {
-			push(id, cost, noConnector)
+			push(id, cost, noConnector, -1)
 		}
 	}
 	if !p.fromExit {
 		// Automatic exits beside the start, which perhaps only the start
 		// (on a tile nobody else can stand on) touches.
 		neighbours(sm, startTile, func(t int32) bool { return passable(sm, t) && isAutomaticExitTile(sm, t) }, seedExit)
-	}
-	for _, id := range a.mapConnectors[sm.Index] {
-		if p.fromExit {
-			break
-		}
-		c := a.Connectors[id]
-		tile := sm.Tile(c.X, c.Y)
-		cost := start.cost(tile)
-		if c.Component < 0 {
-			var ok bool
-			if cost, _, ok = start.stepOnto(sm, tile); !ok {
-				continue
+		for _, id := range a.mapConnectors[sm.Index] {
+			c := a.Connectors[id]
+			tile := sm.Tile(c.X, c.Y)
+			cost := start.cost(tile)
+			if c.Component < 0 {
+				var ok bool
+				if cost, _, ok = start.stepOnto(sm, tile); !ok {
+					continue
+				}
+			}
+			if cost >= 0 {
+				push(id, cost, noConnector, -1)
 			}
 		}
-		if cost >= 0 {
-			push(id, cost, noConnector)
+		if !standable(sm, startTile) {
+			if err := p.seedSeamStarts(ctx, side, goalTile, &best, push); err != nil {
+				return Plan{}, err
+			}
 		}
 	}
 	finish := noConnector
@@ -277,8 +314,8 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 		if n.cost >= best {
 			break
 		}
-		if r.MaxExpanded > 0 && expanded >= r.MaxExpanded {
-			return Plan{LimitReached: true, Expanded: expanded, Duration: time.Since(started)}, nil
+		if p.work--; p.work < 0 {
+			return Plan{Expanded: expanded}, errLimit
 		}
 		if expanded%1024 == 0 {
 			if err := ctx.Err(); err != nil {
@@ -288,15 +325,18 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 		expanded++
 		// (An automatic exit's own connector, such as the start's when the
 		// walker starts on one, is never a goal: it has no component.)
-		if extra, ok := goalCost(n.tile); ok && n.cost+extra < best {
-			best, finish = n.cost+extra, n.tile
+		if extra, ok := goalCost(n.tile); ok && int64(n.cost)+int64(extra) < int64(best) {
+			best, finish, p.finishSeam = n.cost+extra, n.tile, -1
 		}
 		for _, e := range a.Out[n.tile] {
 			to := a.Connectors[e.To]
 			if p.avoided(to.Map) {
 				continue
 			}
-			push(e.To, n.cost+e.Cost, n.tile)
+			// Costs from a damaged atlas file must not wrap around.
+			if total := int64(n.cost) + int64(e.Cost); total < math.MaxInt32 {
+				push(e.To, int32(total), n.tile, -1)
+			}
 		}
 	}
 	if best == math.MaxInt32 {
@@ -309,7 +349,65 @@ func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
 		chain[i], chain[j] = chain[j], chain[i]
 	}
-	return p.assemble(ctx, chain, best, started, expanded)
+	plan, err := p.assemble(ctx, chain, best, started, expanded)
+	plan.Expanded = expanded
+	return plan, err
+}
+
+// seedSeamStarts lets an agent on a tile nobody else can stand on step
+// straight across a seam: it seeds the connectors walkable from each tile
+// it can land on, and the goal when it lies there.
+func (p *planner) seedSeamStarts(ctx context.Context, side *gridSearch, goalTile int32, best *int32,
+	push func(id, cost, from, origin int32)) error {
+	a, r := p.a, p.r
+	sm := r.Start.Map
+	for dir := world.North; dir <= world.NorthWest; dir++ {
+		d := world.Deltas[dir]
+		n, nx, ny, ok := a.World.Step(sm, r.Start.X, r.Start.Y, d[0], d[1])
+		if !ok || n == sm || p.avoided(n.Index) || !a.cornersOpen(sm, r.Start.X, r.Start.Y, d) {
+			continue
+		}
+		dest := n.Tile(nx, ny)
+		origin := int32(len(p.seamStarts))
+		if !standable(n, dest) {
+			// Stepping across onto an automatic exit takes it.
+			if passable(n, dest) && isAutomaticExitTile(n, dest) {
+				if id, ok := a.Lookup(n, nx, ny); ok {
+					p.seamStarts = append(p.seamStarts, seamStart{n, dest})
+					push(id, Transition, noConnector, origin)
+				}
+			}
+			continue
+		}
+		p.seamStarts = append(p.seamStarts, seamStart{n, dest})
+		if err := side.run(ctx, n, dest, &p.work); err != nil {
+			return err
+		}
+		switch {
+		case r.GoalMap == n:
+			if Transition < *best {
+				*best, p.finishSeam = Transition, int(origin)
+			}
+		case r.GoalTile != nil && r.GoalTile.Map == n:
+			if c := side.cost(goalTile); c >= 0 && Transition+c < *best {
+				*best, p.finishSeam = Transition+c, int(origin)
+			}
+		}
+		for _, id := range a.mapConnectors[n.Index] {
+			c := a.Connectors[id]
+			tile := n.Tile(c.X, c.Y)
+			cost := side.cost(tile)
+			if c.Component < 0 {
+				if cost, _, ok = side.stepOnto(n, tile); !ok {
+					continue
+				}
+			}
+			if cost >= 0 {
+				push(id, Transition+cost, noConnector, origin)
+			}
+		}
+	}
+	return nil
 }
 
 func (p *planner) avoided(m int32) bool {
@@ -330,28 +428,6 @@ func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, start
 	add := func(m *world.Map, tile int32, kind WaypointKind) {
 		plan.Waypoints = append(plan.Waypoints, Waypoint{Map: m, X: tile % m.Width, Y: tile / m.Width, Kind: kind})
 	}
-	sm := r.Start.Map
-	startTile := sm.Tile(r.Start.X, r.Start.Y)
-	add(sm, startTile, Start)
-	if len(chain) == 0 {
-		if r.GoalTile != nil {
-			// A walk on the start map, possibly to the start itself.
-			path := p.s.start.path(r.GoalTile.Map.Tile(r.GoalTile.X, r.GoalTile.Y))
-			p.walk(&plan, sm, path, r.Spacing)
-			plan.Waypoints[len(plan.Waypoints)-1].Kind = Goal
-		}
-		if r.GoalMap != nil {
-			plan.Waypoints[0].Kind = Goal
-		}
-		plan.Duration = time.Since(started)
-		return plan, nil
-	}
-	// Start to the first connector.
-	first := a.Connectors[chain[0]]
-	if !p.fromExit {
-		p.walkTo(&plan, &p.s.start, sm, first, r.Spacing)
-	}
-	leg := &p.s.leg
 	// transition marks the last waypoint as where a transition is used; the
 	// start keeps its own waypoint, so one used from there is added after it.
 	transition := func(kind WaypointKind, automatic bool, label string) {
@@ -362,6 +438,59 @@ func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, start
 		at := &plan.Waypoints[len(plan.Waypoints)-1]
 		at.Kind, at.Automatic, at.Label = kind, automatic, label
 	}
+	sm := r.Start.Map
+	startTile := sm.Tile(r.Start.X, r.Start.Y)
+	add(sm, startTile, Start)
+	leg := &p.s.leg
+	origin := p.finishSeam
+	if len(chain) > 0 {
+		origin = int(p.s.origin[chain[0]])
+	}
+	switch {
+	case origin >= 0:
+		// Straight across a seam from a tile nobody else can stand on.
+		ss := p.seamStarts[origin]
+		transition(CrossSeam, false, "")
+		add(ss.m, ss.tile, Arrive)
+		plan.Tiles++
+		if err := leg.run(ctx, ss.m, ss.tile, &p.work); err != nil {
+			return Plan{}, err
+		}
+		if len(chain) == 0 {
+			if r.GoalTile != nil {
+				if err := p.walk(&plan, ss.m, leg.path(r.GoalTile.Map.Tile(r.GoalTile.X, r.GoalTile.Y), &p.s.path), r.Spacing); err != nil {
+					return Plan{}, err
+				}
+			}
+			plan.Waypoints[len(plan.Waypoints)-1].Kind = Goal
+			plan.Duration = time.Since(started)
+			return plan, nil
+		}
+		if first := a.Connectors[chain[0]]; ss.m.Tile(first.X, first.Y) != ss.tile {
+			if err := p.walkTo(&plan, leg, ss.m, first, r.Spacing); err != nil {
+				return Plan{}, err
+			}
+		}
+	case len(chain) == 0:
+		if r.GoalTile != nil {
+			// A walk on the start map, possibly to the start itself.
+			path := p.s.start.path(r.GoalTile.Map.Tile(r.GoalTile.X, r.GoalTile.Y), &p.s.path)
+			if err := p.walk(&plan, sm, path, r.Spacing); err != nil {
+				return Plan{}, err
+			}
+			plan.Waypoints[len(plan.Waypoints)-1].Kind = Goal
+		}
+		if r.GoalMap != nil {
+			plan.Waypoints[0].Kind = Goal
+		}
+		plan.Duration = time.Since(started)
+		return plan, nil
+	case !p.fromExit:
+		// Start to the first connector.
+		if err := p.walkTo(&plan, &p.s.start, sm, a.Connectors[chain[0]], r.Spacing); err != nil {
+			return Plan{}, err
+		}
+	}
 	for i := 0; i+1 < len(chain); i++ {
 		u, v := chain[i], chain[i+1]
 		edge := a.edge(u, v)
@@ -369,10 +498,12 @@ func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, start
 		mu, mv := a.World.Maps[cu.Map], a.World.Maps[cv.Map]
 		switch edge.Kind {
 		case WalkEdge:
-			if err := leg.run(ctx, mu, mu.Tile(cu.X, cu.Y)); err != nil {
+			if err := leg.run(ctx, mu, mu.Tile(cu.X, cu.Y), &p.work); err != nil {
 				return Plan{}, err
 			}
-			p.walkTo(&plan, leg, mu, cv, r.Spacing)
+			if err := p.walkTo(&plan, leg, mu, cv, r.Spacing); err != nil {
+				return Plan{}, err
+			}
 		case ExitEdge:
 			transition(UseExit, edge.Automatic, edge.Label)
 			add(mv, mv.Tile(cv.X, cv.Y), Arrive)
@@ -386,11 +517,13 @@ func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, start
 	last := a.Connectors[chain[len(chain)-1]]
 	lm := a.World.Maps[last.Map]
 	if r.GoalTile != nil {
-		if err := leg.run(ctx, lm, lm.Tile(last.X, last.Y)); err != nil {
+		if err := leg.run(ctx, lm, lm.Tile(last.X, last.Y), &p.work); err != nil {
 			return Plan{}, err
 		}
-		path := leg.path(r.GoalTile.Map.Tile(r.GoalTile.X, r.GoalTile.Y))
-		p.walk(&plan, lm, path, r.Spacing)
+		path := leg.path(r.GoalTile.Map.Tile(r.GoalTile.X, r.GoalTile.Y), &p.s.path)
+		if err := p.walk(&plan, lm, path, r.Spacing); err != nil {
+			return Plan{}, err
+		}
 	}
 	plan.Waypoints[len(plan.Waypoints)-1].Kind = Goal
 	plan.Duration = time.Since(started)
@@ -398,33 +531,35 @@ func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, start
 }
 
 // walkTo appends the walk from a search's source to connector c.
-func (p *planner) walkTo(plan *Plan, g *gridSearch, m *world.Map, c Connector, spacing int32) {
+func (p *planner) walkTo(plan *Plan, g *gridSearch, m *world.Map, c Connector, spacing int32) error {
 	tile := m.Tile(c.X, c.Y)
 	if c.Component < 0 {
 		// Step onto an automatic exit from its cheapest neighbour.
 		_, from, ok := g.stepOnto(m, tile)
 		if !ok {
-			return
+			return nil
 		}
-		path := append(g.path(from), tile)
-		p.walk(plan, m, path, spacing)
-		return
+		return p.walk(plan, m, append(g.path(from, &p.s.path), tile), spacing)
 	}
-	p.walk(plan, m, g.path(tile), spacing)
+	return p.walk(plan, m, g.path(tile, &p.s.path), spacing)
 }
 
 // walk appends a tile path's waypoints (its first tile is already the last
-// waypoint), at most spacing apart.
-func (p *planner) walk(plan *Plan, m *world.Map, path []int32, spacing int32) {
+// waypoint), at most spacing apart. Each waypoint spends one unit of work.
+func (p *planner) walk(plan *Plan, m *world.Map, path []int32, spacing int32) error {
 	if len(path) < 2 {
-		return
+		return nil
 	}
 	plan.Tiles += int32(len(path) - 1)
-	for _, i := range simplify(m, path, spacing) {
+	for _, i := range simplify(m, path, spacing, p.s) {
+		if p.work--; p.work < 0 {
+			return errLimit
+		}
 		plan.Waypoints = append(plan.Waypoints, Waypoint{
 			Map: m, X: path[i] % m.Width, Y: path[i] / m.Width, Kind: Walk,
 		})
 	}
+	return nil
 }
 
 // edge returns the cheapest edge from u to v.
@@ -446,9 +581,14 @@ func (a *Atlas) edge(u, v int32) Edge {
 // than the tolerance (half a tile on roads, a tile elsewhere), so walking
 // straight between waypoints stays on the chosen route; long straight runs
 // are then split so that consecutive waypoints are at most spacing tiles
-// apart.
-func simplify(m *world.Map, path []int32, spacing int32) []int32 {
-	keep := make([]bool, len(path))
+// apart. Finally every segment must be walkable in a straight line, so a
+// waypoint is never dropped from a bend that rounds an obstacle.
+func simplify(m *world.Map, path []int32, spacing int32, s *scratch) []int32 {
+	keep := s.keep[:0]
+	for range path {
+		keep = append(keep, false)
+	}
+	s.keep = keep
 	keep[0], keep[len(path)-1] = true, true
 	lo := 0
 	for i := 1; i <= len(path); i++ {
@@ -464,7 +604,7 @@ func simplify(m *world.Map, path []int32, spacing int32) []int32 {
 		rdp(m, path, lo, i-1, keep, tolerance)
 		lo = i
 	}
-	var out []int32
+	out := s.kept[:0]
 	last := 0
 	for i := 1; i < len(path); i++ {
 		if !keep[i] {
@@ -476,13 +616,49 @@ func simplify(m *world.Map, path []int32, spacing int32) []int32 {
 			for j+1 < i && chebyshevTiles(m, path[last], path[j+1]) <= spacing {
 				j++
 			}
-			out = append(out, int32(j))
+			out = appendWalkable(m, path, out, last, j)
 			last = j
 		}
-		out = append(out, int32(i))
+		out = appendWalkable(m, path, out, last, i)
 		last = i
 	}
+	s.kept = out
 	return out
+}
+
+// appendWalkable appends the index hi, preceded by whatever points of
+// path[lo:hi] walking straight from path[lo] to path[hi] needs.
+func appendWalkable(m *world.Map, path []int32, out []int32, lo, hi int) []int32 {
+	if hi-lo > 1 && !straightWalkable(m, path[lo], path[hi]) {
+		mid := (lo + hi) / 2
+		out = appendWalkable(m, path, out, lo, mid)
+		lo = mid
+		return appendWalkable(m, path, out, lo, hi)
+	}
+	return append(out, int32(hi))
+}
+
+// straightWalkable reports whether walking from a to b one eight-way step at
+// a time along the line between them stays on standable tiles (b itself may
+// be an automatic exit) under strict corners.
+func straightWalkable(m *world.Map, a, b int32) bool {
+	ax, ay := a%m.Width, a/m.Width
+	dx, dy := b%m.Width-ax, b/m.Width-ay
+	n := max(abs32(dx), abs32(dy))
+	px, py := ax, ay
+	for k := int32(1); k <= n; k++ {
+		x := ax + int32(math.Round(float64(k*dx)/float64(n)))
+		y := ay + int32(math.Round(float64(k*dy)/float64(n)))
+		tile := m.Tile(x, y)
+		if k < n && !standable(m, tile) || k == n && !passable(m, tile) {
+			return false
+		}
+		if x != px && y != py && (!passable(m, m.Tile(x, py)) || !passable(m, m.Tile(px, y))) {
+			return false
+		}
+		px, py = x, y
+	}
+	return true
 }
 
 // rdpTolerance and roadTolerance are the largest distances, in tiles, a

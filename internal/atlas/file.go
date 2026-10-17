@@ -166,8 +166,12 @@ func (a *Atlas) walkEdge(from int32, pe *atlasv1.Edge) (Edge, error) {
 		return Edge{}, fmt.Errorf("walk to connector %d", pe.GetTo())
 	}
 	fc, tc := a.Connectors[from], a.Connectors[pe.GetTo()]
+	// A walk costs at least a road step per tile of distance, and at most a
+	// plain step per tile of its map (plus the step onto an automatic exit),
+	// which also keeps route totals far from overflowing.
 	floor := RoadStep * max(abs32(fc.X-tc.X), abs32(fc.Y-tc.Y))
-	if pe.GetCost() < uint32(floor) || pe.GetCost() > 1<<30 || pe.GetAutomatic() || pe.GetLabel() != "" {
+	ceiling := PlainStep * (len(a.World.Maps[fc.Map].Terrain) + 1)
+	if pe.GetCost() < uint32(floor) || int64(pe.GetCost()) > int64(ceiling) || pe.GetAutomatic() || pe.GetLabel() != "" {
 		return Edge{}, fmt.Errorf("walk to connector %d: bad cost %d or attributes", pe.GetTo(), pe.GetCost())
 	}
 	return Edge{To: int32(pe.GetTo()), Cost: int32(pe.GetCost()), Kind: WalkEdge}, nil

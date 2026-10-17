@@ -128,6 +128,16 @@ func TestMalformedAtlasFilesAreRejected(t *testing.T) {
 				}
 			}
 		},
+		"walk cost above bound": func(f *atlasv1.Atlas) {
+			for _, c := range f.Connectors {
+				for _, e := range c.Edges {
+					if e.Kind == atlasv1.EdgeKind_EDGE_KIND_WALK {
+						e.Cost = 1 << 30
+						return
+					}
+				}
+			}
+		},
 		"walk cost below bound": func(f *atlasv1.Atlas) {
 			for _, c := range f.Connectors {
 				for _, e := range c.Edges {

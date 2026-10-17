@@ -45,10 +45,10 @@ func TestGridSearchesStopWhenCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var g gridSearch
-	if err := g.run(ctx, m, 0); !errors.Is(err, context.Canceled) {
+	if err := g.run(ctx, m, 0, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled search: %v", err)
 	}
-	if err := g.run(context.Background(), m, 0); err != nil || g.cost(m.Tile(63, 63)) != 63*PlainStep {
+	if err := g.run(context.Background(), m, 0, nil); err != nil || g.cost(m.Tile(63, 63)) != 63*PlainStep {
 		t.Fatalf("live search: %v cost %d", err, g.cost(m.Tile(63, 63)))
 	}
 }

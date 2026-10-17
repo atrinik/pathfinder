@@ -44,11 +44,13 @@ protocol.
   to step across, `ARRIVE` where those land, and `GOAL`. Consecutive
   waypoints on one map are at most `spacing` tiles apart (7 by default), and
   walking straight between them stays within a tile of the planned route
-  (half a tile on roads, whose entry and exit points are always kept). A
+  (half a tile on roads, whose entry and exit points are always kept), and
+  every segment between two waypoints can be walked in a straight line. A
   plan that starts on an automatic exit begins by taking it, and one that
-  starts on an exit inside a wall can still use it. `max_expanded` bounds the
-  connectors a plan may expand (capped by the server's `-max-expanded`);
-  hitting it returns `LIMIT_REACHED`.
+  starts on an exit inside a wall can still use it. `max_expanded` bounds a
+  plan's work, counting each connector expanded, tile searched and waypoint
+  returned (capped by the server's `-max-expanded`); hitting it returns
+  `LIMIT_REACHED`.
   Roads cost two thirds of a plain step, so the route follows them where the
   detour pays; `cost` is in thirds of a move and `tiles` counts the moves.
   Agents with other abilities (keys, swimming, staying on one map) use
@@ -152,9 +154,9 @@ a second; the 149-step walk from the Asteria inn to the Strakewood Island
 farm takes about 6 ms. The atlas has 8,915 connectors, 74,277 edges and
 35,960 road tiles. Building it takes 35 ms on 32 cores and 250 ms on one;
 loading its 900 KB file takes 29 ms and 50 ms. Planning the inn-to-farm trip
-takes about 0.6 ms (64 waypoints over 163 tiles), and the 447-step walk from
-Strakewood town to the farm about 1.7 ms instead of 28 ms for the precise
-search, allocating 25 KB with a reused planner slot; roads lengthen these
+takes about 0.6 ms (72 waypoints over 163 tiles), and the 447-step walk from
+Strakewood town to the farm about 1.8 ms instead of 28 ms for the precise
+search, with 14 allocations from a reused planner slot; roads lengthen these
 walks by 5 to 10 %.
 
 Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Provenance is recorded

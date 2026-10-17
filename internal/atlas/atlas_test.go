@@ -201,11 +201,76 @@ func TestPlansStopAtTheirExpansionLimit(t *testing.T) {
 	goal, _ := w.Lookup("/t/c")
 	start := at(t, w, "/t/a", 0, 0)
 	p := plan(t, a, atlas.Request{Start: start, GoalMap: goal, MaxExpanded: 2})
-	if p.Found || !p.LimitReached || p.Expanded != 2 {
+	if p.Found || !p.LimitReached {
 		t.Fatalf("limited: %+v", p)
 	}
 	if p := plan(t, a, atlas.Request{Start: start, GoalMap: goal}); !p.Found || p.LimitReached {
 		t.Fatalf("unlimited: %+v", p)
+	}
+}
+
+func TestWaypointsKeepBendsAroundObstacles(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/t/yard", "...", ".#.")
+	a, w := build(t, c)
+	goal := at(t, w, "/t/yard", 2, 1)
+	p := plan(t, a, atlas.Request{Start: at(t, w, "/t/yard", 0, 1), GoalTile: &goal})
+	if !p.Found || len(p.Waypoints) < 3 {
+		t.Fatalf("the bend around the wall was dropped: %s", describe(p))
+	}
+	checkWalkable(t, p)
+}
+
+func TestPlansSpendOneWorkBudget(t *testing.T) {
+	// A long snake: every waypoint of a spacing-1 plan costs work too.
+	rows := []string{}
+	for y := range 21 {
+		switch {
+		case y%2 == 0:
+			rows = append(rows, strings.Repeat(".", 21))
+		case y%4 == 1:
+			rows = append(rows, strings.Repeat("#", 20)+".")
+		default:
+			rows = append(rows, "."+strings.Repeat("#", 20))
+		}
+	}
+	c := fixture.New(t)
+	c.Map("/t/snake", rows...)
+	a, w := build(t, c)
+	goal := at(t, w, "/t/snake", 20, 20)
+	r := atlas.Request{Start: at(t, w, "/t/snake", 0, 0), GoalTile: &goal, Spacing: 1}
+	full := plan(t, a, r)
+	if !full.Found || len(full.Waypoints) < 200 {
+		t.Fatalf("unbounded: %d waypoints", len(full.Waypoints))
+	}
+	// Enough for both tile searches, but not for every waypoint.
+	r.MaxExpanded = 2*(11*21+10) + 50
+	if p := plan(t, a, r); p.Found || !p.LimitReached || len(p.Waypoints) != 0 {
+		t.Fatalf("limited: found %v limit %v, %d waypoints", p.Found, p.LimitReached, len(p.Waypoints))
+	}
+}
+
+func TestStartsInWallsCanStepAcrossSeams(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/w/world_0_0", "#")
+	c.Map("/w/world_1_0", "...")
+	a, w := build(t, c)
+	east, _ := w.Lookup("/w/world_1_0")
+	start := at(t, w, "/w/world_0_0", 0, 0)
+	p := plan(t, a, atlas.Request{Start: start, GoalMap: east})
+	if !p.Found || kinds(p) != "start seam goal" {
+		t.Fatalf("to the map: %s", describe(p))
+	}
+	goal := at(t, w, "/w/world_1_0", 2, 0)
+	p = plan(t, a, atlas.Request{Start: start, GoalTile: &goal})
+	if !p.Found || kinds(p) != "start seam arrive goal" || p.Cost != 3*atlas.PlainStep {
+		t.Fatalf("to the tile: cost %d %s", p.Cost, describe(p))
+	}
+	e := search.NewEngine(w, 1)
+	r, err := e.FindPath(context.Background(), search.Query{
+		Start: search.Position{Map: start.Map, X: 0, Y: 0}, GoalTile: &search.Position{Map: east, X: 2, Y: 0}})
+	if err != nil || r.Status != search.Found || 3*r.Cost != p.Cost {
+		t.Fatalf("precise search: %v %d", r.Status, r.Cost)
 	}
 }
 
@@ -462,12 +527,19 @@ func blocked(m *world.Map, x, y int32) bool {
 }
 
 // checkWalkable asserts every waypoint after the start (where the agent
-// already is) stands on open ground.
+// already is) stands on open ground, and that each walk between two
+// waypoints on one map can be taken in a straight line.
 func checkWalkable(t *testing.T, p atlas.Plan) {
 	t.Helper()
 	for i, wp := range p.Waypoints {
 		if i == 0 {
 			continue
+		}
+		prev := p.Waypoints[i-1]
+		if prev.Map == wp.Map && prev.Kind != atlas.UseExit && prev.Kind != atlas.CrossSeam &&
+			!atlas.StraightWalkableTiles(&atlas.Position{Map: prev.Map, X: prev.X, Y: prev.Y},
+				atlas.Position{Map: wp.Map, X: wp.X, Y: wp.Y}) {
+			t.Fatalf("waypoints %d and %d cannot be walked straight: %s", i-1, i, describe(p))
 		}
 		if wp.Kind == atlas.Walk || wp.Kind == atlas.Goal || wp.Kind == atlas.Arrive {
 			if blocked(wp.Map, wp.X, wp.Y) {

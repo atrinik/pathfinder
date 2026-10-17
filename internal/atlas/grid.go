@@ -143,8 +143,9 @@ const cancelCheckInterval = 1024
 // run computes walker costs from source to every standable tile of its
 // component. The source itself need not be standable (an agent can start
 // on a door or exit tile). It stops with the context's error when the
-// context ends.
-func (g *gridSearch) run(ctx context.Context, m *world.Map, source int32) error {
+// context ends, and with errLimit once it has settled as many tiles as
+// *work allows (nil: no bound), spending them from *work.
+func (g *gridSearch) run(ctx context.Context, m *world.Map, source int32, work *int) error {
 	g.prepare(len(m.Terrain))
 	g.source = source
 	g.stamp[source], g.dist[source], g.parent[source] = g.gen, 0, -1
@@ -159,6 +160,11 @@ func (g *gridSearch) run(ctx context.Context, m *world.Map, source int32) error 
 		n := g.open.pop()
 		if n.cost != g.dist[n.tile] {
 			continue
+		}
+		if work != nil {
+			if *work--; *work < 0 {
+				return errLimit
+			}
 		}
 		neighbours(m, n.tile, open, func(next int32) {
 			c := n.cost + stepCost(m, n.tile, next)
@@ -180,16 +186,21 @@ func (g *gridSearch) only(m *world.Map, source int32) {
 	g.stamp[source], g.dist[source], g.parent[source] = g.gen, 0, -1
 }
 
-// path returns the tiles from the last run's source to tile, inclusive.
-func (g *gridSearch) path(tile int32) []int32 {
-	var reversed []int32
+// path returns the tiles from the last run's source to tile, inclusive,
+// reusing *buf for them.
+func (g *gridSearch) path(tile int32, buf *[]int32) []int32 {
+	n := 0
 	for t := tile; t >= 0; t = g.parent[t] {
-		reversed = append(reversed, t)
+		n++
 	}
-	out := make([]int32, len(reversed))
-	for i, t := range reversed {
-		out[len(reversed)-1-i] = t
+	out := (*buf)[:0]
+	for range n {
+		out = append(out, 0)
 	}
+	for i, t := n-1, tile; t >= 0; i, t = i-1, g.parent[t] {
+		out[i] = t
+	}
+	*buf = out
 	return out
 }
 

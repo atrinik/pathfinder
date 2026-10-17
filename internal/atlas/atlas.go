@@ -408,7 +408,7 @@ func (a *Atlas) addWalks() {
 				if fc.Component < 0 {
 					continue // nobody walks away from an automatic exit
 				}
-				_ = g.run(context.Background(), m, m.Tile(fc.X, fc.Y))
+				_ = g.run(context.Background(), m, m.Tile(fc.X, fc.Y), nil)
 				for _, to := range members {
 					if to == from {
 						continue
