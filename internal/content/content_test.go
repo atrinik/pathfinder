@@ -249,3 +249,16 @@ func TestLoadDigestCoversEveryLoadedFile(t *testing.T) {
 		t.Error("a new map must change the digest")
 	}
 }
+
+func TestLoadFlagsAutomaticExitTiles(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/t/town", "...").
+		Object("teleporter", 0, 0, "slaying /t/inn", "hp 0", "sp 0").
+		Object("portal", 2, 0, "slaying /t/inn", "hp 0", "sp 0")
+	c.Map("/t/inn", "..")
+	w := load(t, c)
+	m, _ := w.Lookup("/t/town")
+	if !m.AutoExit[m.Tile(0, 0)] || m.AutoExit[m.Tile(1, 0)] || m.AutoExit[m.Tile(2, 0)] {
+		t.Fatalf("automatic exit flags %v", m.AutoExit)
+	}
+}

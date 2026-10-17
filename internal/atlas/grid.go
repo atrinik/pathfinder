@@ -30,15 +30,7 @@ func passable(m *world.Map, tile int32) bool {
 // standable reports whether a walker can stop on a tile: passable and not an
 // automatic exit (stepping onto one carries the walker away).
 func standable(m *world.Map, tile int32) bool {
-	if !passable(m, tile) {
-		return false
-	}
-	for _, exit := range m.Exits[tile] {
-		if exit.Automatic {
-			return false
-		}
-	}
-	return true
+	return passable(m, tile) && !isAutomaticExitTile(m, tile)
 }
 
 // stepCost is the cost of moving between two adjacent tiles.

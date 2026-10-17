@@ -661,6 +661,11 @@ func TestInvalidRequests(t *testing.T) {
 	m, _ := w.Lookup("/t/a")
 	goal := at(t, w, "/t/a", 1, 0)
 	outside := at(t, w, "/t/a", 5, 0)
+	// The same map loaded again belongs to another world.
+	c2 := fixture.New(t)
+	c2.Map("/t/a", "..")
+	_, w2 := build(t, c2)
+	foreign := at(t, w2, "/t/a", 1, 0)
 	for name, r := range map[string]atlas.Request{
 		"no start":         {GoalMap: m},
 		"start outside":    {Start: outside, GoalMap: m},
@@ -668,6 +673,9 @@ func TestInvalidRequests(t *testing.T) {
 		"both goals":       {Start: goal, GoalMap: m, GoalTile: &goal},
 		"goal outside":     {Start: goal, GoalTile: &outside},
 		"goal tile no map": {Start: goal, GoalTile: &atlas.Position{X: 1}},
+		"foreign start":    {Start: foreign, GoalMap: m},
+		"foreign goal map": {Start: goal, GoalMap: foreign.Map},
+		"foreign goal":     {Start: goal, GoalTile: &foreign},
 	} {
 		if _, err := a.Plan(context.Background(), r); err != atlas.ErrInvalid {
 			t.Errorf("%s: %v", name, err)

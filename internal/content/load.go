@@ -239,7 +239,8 @@ func Compile(archetypes map[string]*Archetype, files map[string]*MapFile, digest
 			Width: width, Height: height,
 			EnterX: int32(h.Int("enter_x", 0)), EnterY: int32(h.Int("enter_y", 0)),
 			Terrain: make([]uint32, tiles), Blocked: make([]bool, tiles), Road: make([]bool, tiles),
-			Locks: map[int32]string{}, Exits: map[int32][]world.Exit{},
+			AutoExit: make([]bool, tiles),
+			Locks:    map[int32]string{}, Exits: map[int32][]world.Exit{},
 			Seams: [8]int32{-1, -1, -1, -1, -1, -1, -1, -1},
 		})
 	}
@@ -398,6 +399,7 @@ func addExit(w *world.World, m *world.Map, header Attrs, o *Object, a *Archetype
 		m.Exits[tile] = append(m.Exits[tile], world.Exit{
 			To: n.Index, X: ax, Y: ay, Automatic: automatic, Label: label,
 		})
+		m.AutoExit[tile] = m.AutoExit[tile] || automatic
 		return nil
 	}
 	// Destination-less stairs lead to the same square one level up or down.
@@ -409,6 +411,7 @@ func addExit(w *world.World, m *world.Map, header Attrs, o *Object, a *Archetype
 		m.Exits[tile] = append(m.Exits[tile], world.Exit{
 			To: n.Index, X: x, Y: y, Automatic: automatic, Label: label,
 		})
+		m.AutoExit[tile] = m.AutoExit[tile] || automatic
 	}
 	return nil
 }

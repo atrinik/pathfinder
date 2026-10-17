@@ -227,7 +227,13 @@ func (a *Atlas) addConnectors() {
 	}
 }
 
+// isAutomaticExitTile reports whether stepping onto a tile takes an exit. It
+// reads the loader's per-tile flag, scanning the exits only on hand-built
+// maps without one.
 func isAutomaticExitTile(m *world.Map, tile int32) bool {
+	if m.AutoExit != nil {
+		return m.AutoExit[tile]
+	}
 	for _, exit := range m.Exits[tile] {
 		if exit.Automatic {
 			return true

@@ -51,6 +51,9 @@ type Map struct {
 	Blocked []bool
 	// Road marks tiles paved with a road floor.
 	Road []bool
+	// AutoExit marks tiles holding an automatic exit, so movement checks
+	// need not scan a tile's exits. Nil (in hand-built maps) means unknown.
+	AutoExit []bool
 	// Locks maps a locked door's tile to the key identifier it requires.
 	Locks map[int32]string
 	// Exits maps a tile to the exits it holds.

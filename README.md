@@ -121,7 +121,11 @@ only the costly walks are read: exactly one from each connector to every
 other connector walkable from its component, so a damaged file is refused
 rather than silently losing or inventing routes.
 A plan also checks each walk it re-derives against its edge's cost and fails
-with `DATA_LOSS` on a mismatch. Files are byte-for-byte reproducible. Like path searches, at most
+with `DATA_LOSS` on a mismatch. These checks detect damage, not forgery: an
+atlas file is trusted operator input, like the content checkout and the
+binary, since proving every stored walk cost exact would cost as much as
+building the atlas. Serve a file only from where the content comes from, or
+let the daemon build the atlas. Files are byte-for-byte reproducible. Like path searches, at most
 `-max-concurrent` plans run at once, each reusing its own scratch space, and
 a canceled request stops its plan.
 

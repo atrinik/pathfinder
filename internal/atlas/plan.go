@@ -166,9 +166,10 @@ func (a *Atlas) plan(ctx context.Context, r Request, s *scratch) (Plan, error) {
 	if err := ctx.Err(); err != nil {
 		return Plan{}, err
 	}
-	if r.Start.Map == nil || !r.Start.Map.InBounds(r.Start.X, r.Start.Y) ||
+	if !a.owns(r.Start.Map) || !r.Start.Map.InBounds(r.Start.X, r.Start.Y) ||
 		(r.GoalTile == nil) == (r.GoalMap == nil) ||
-		(r.GoalTile != nil && (r.GoalTile.Map == nil || !r.GoalTile.Map.InBounds(r.GoalTile.X, r.GoalTile.Y))) {
+		(r.GoalTile != nil && (!a.owns(r.GoalTile.Map) || !r.GoalTile.Map.InBounds(r.GoalTile.X, r.GoalTile.Y))) ||
+		(r.GoalMap != nil && !a.owns(r.GoalMap)) {
 		return Plan{}, ErrInvalid
 	}
 	if r.Spacing <= 0 {
@@ -176,6 +177,12 @@ func (a *Atlas) plan(ctx context.Context, r Request, s *scratch) (Plan, error) {
 	}
 	p := planner{a: a, r: r, s: s, ctx: ctx}
 	return p.run(ctx, started)
+}
+
+// owns reports whether m is one of this atlas's own maps (not nil, and not
+// a map of another world, whose index would point at unrelated data).
+func (a *Atlas) owns(m *world.Map) bool {
+	return m != nil && m.Index >= 0 && int(m.Index) < len(a.World.Maps) && a.World.Maps[m.Index] == m
 }
 
 type planner struct {
