@@ -400,6 +400,31 @@ func TestSeamStartsIntoTheGoalMapSearchNothingThere(t *testing.T) {
 	}
 }
 
+func TestDiagonalStepsAcrossCardinalSeams(t *testing.T) {
+	// From (0,2) the only way west is diagonally onto (2,1): the straight
+	// step lands on a teleporter, and the corner beside the start is one.
+	c := fixture.New(t)
+	c.Map("/w/world_0_0", "..#", "...", "...").
+		Object("teleporter", 2, 2, "slaying /t/cellar", "hp 0", "sp 0")
+	c.Map("/w/world_1_0", "###", ".##", ".##").
+		Object("teleporter", 0, 1, "slaying /t/cellar", "hp 0", "sp 0")
+	c.Map("/t/cellar", "..")
+	a, w := build(t, c)
+	start := at(t, w, "/w/world_1_0", 0, 2)
+	goal := at(t, w, "/w/world_0_0", 0, 0)
+	p := plan(t, a, atlas.Request{Start: start, GoalTile: &goal})
+	e := search.NewEngine(w, 1)
+	r, err := e.FindPath(context.Background(), search.Query{
+		Start: search.Position{Map: start.Map, X: 0, Y: 2}, GoalTile: &search.Position{Map: goal.Map}})
+	if err != nil || r.Status != search.Found {
+		t.Fatalf("precise search: %v %v", r.Status, err)
+	}
+	if !p.Found || p.Cost != 3*r.Cost {
+		t.Fatalf("cost %d (precise %d): %s", p.Cost, r.Cost, describe(p))
+	}
+	checkWalkable(t, p)
+}
+
 func TestStartsInWallsUseSelfSeams(t *testing.T) {
 	// The east border leads back to the west one.
 	c := fixture.New(t)

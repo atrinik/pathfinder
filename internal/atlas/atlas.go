@@ -249,9 +249,8 @@ func (a *Atlas) addSeamConnectors(m *world.Map) {
 			continue
 		}
 		d := world.Deltas[dir]
-		type pair struct{ x, y, nx, ny, from, to int32 }
-		var runs [][]pair
-		var current []pair
+		var runs [][]seamPair
+		var current []seamPair
 		var key [2]int32
 		flush := func() {
 			if len(current) > 0 {
@@ -271,7 +270,7 @@ func (a *Atlas) addSeamConnectors(m *world.Map) {
 				if passable(n, dest) && isAutomaticExitTile(n, dest) {
 					// Stepping across onto an automatic exit takes it at
 					// once; each such tile leads somewhere of its own.
-					runs = append(runs, []pair{{b[0], b[1], nx, ny, a.Components[m.Index][tile], -1}})
+					runs = append(runs, []seamPair{{b[0], b[1], nx, ny, a.Components[m.Index][tile], -1}})
 				}
 				continue
 			}
@@ -280,9 +279,12 @@ func (a *Atlas) addSeamConnectors(m *world.Map) {
 				flush()
 			}
 			key = k
-			current = append(current, pair{b[0], b[1], nx, ny, k[0], k[1]})
+			current = append(current, seamPair{b[0], b[1], nx, ny, k[0], k[1]})
 		}
 		flush()
+		if dir <= world.West {
+			runs = a.addDiagonalCrossings(m, dir, runs)
+		}
 		n := w.Maps[m.Seams[dir]]
 		for _, run := range runs {
 			mid := run[len(run)/2]
@@ -291,6 +293,64 @@ func (a *Atlas) addSeamConnectors(m *world.Map) {
 			a.pending = append(a.pending, transition{from: from, to: to, kind: SeamEdge})
 		}
 	}
+}
+
+// seamPair is one step across a seam: from (x, y) here to (nx, ny) on the
+// neighbour, between the components from and to (-1: an automatic exit).
+type seamPair struct{ x, y, nx, ny, from, to int32 }
+
+// addDiagonalCrossings adds the diagonal steps across the cardinal seam dir
+// (from a border tile to the neighbour's tile beside the straight landing)
+// that join components, or reach automatic exits, no straight crossing
+// already joins; steps off a corner belong to the corner seams.
+func (a *Atlas) addDiagonalCrossings(m *world.Map, dir world.Direction, runs [][]seamPair) [][]seamPair {
+	w := a.World
+	d := world.Deltas[dir]
+	side := [2]int32{d[1], d[0]} // perpendicular to d
+	covered := map[[2]int32]bool{}
+	exits := map[[2]int32]bool{}
+	for _, run := range runs {
+		for _, p := range run {
+			if p.to < 0 {
+				exits[[2]int32{p.nx, p.ny}] = true
+			} else {
+				covered[[2]int32{p.from, p.to}] = true
+			}
+		}
+	}
+	for _, b := range borderTiles(m, dir) {
+		tile := m.Tile(b[0], b[1])
+		if !standable(m, tile) {
+			continue
+		}
+		for _, sign := range [2]int32{-1, 1} {
+			sx, sy := sign*side[0], sign*side[1]
+			if !m.InBounds(b[0]+sx, b[1]+sy) {
+				continue
+			}
+			step := [2]int32{d[0] + sx, d[1] + sy}
+			n, nx, ny, ok := w.Step(m, b[0], b[1], step[0], step[1])
+			if !ok || n.Index != m.Seams[dir] || !a.cornersOpen(m, b[0], b[1], step) {
+				continue
+			}
+			dest := n.Tile(nx, ny)
+			from := a.Components[m.Index][tile]
+			switch {
+			case standable(n, dest):
+				k := [2]int32{from, a.Components[n.Index][dest]}
+				if !covered[k] {
+					covered[k] = true
+					runs = append(runs, []seamPair{{b[0], b[1], nx, ny, k[0], k[1]}})
+				}
+			case passable(n, dest) && isAutomaticExitTile(n, dest):
+				if !exits[[2]int32{nx, ny}] {
+					exits[[2]int32{nx, ny}] = true
+					runs = append(runs, []seamPair{{b[0], b[1], nx, ny, from, -1}})
+				}
+			}
+		}
+	}
+	return runs
 }
 
 // cornersOpen reports whether a strict-corner walker may take the step d
