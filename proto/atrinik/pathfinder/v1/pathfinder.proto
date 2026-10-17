@@ -1,0 +1,170 @@
+// Pathfinding over the authored Atrinik world.
+//
+// Coordinates are map-local tile coordinates. Map identities are the
+// absolute content paths used by the server, such as
+// "/shattered_islands/world_1_50".
+syntax = "proto3";
+
+package atrinik.pathfinder.v1;
+
+option go_package = "github.com/atrinik/pathfinder/gen/go/atrinik/pathfinder/v1;pathfinderv1";
+
+// PathfinderService answers movement queries against the loaded content.
+service PathfinderService {
+  // FindPath returns an exact tile-by-tile path, crossing tiled-map seams
+  // and exits when the agent may use them.
+  rpc FindPath(FindPathRequest) returns (FindPathResponse);
+  // DescribeMap returns the static layout facts of one loaded map.
+  rpc DescribeMap(DescribeMapRequest) returns (DescribeMapResponse);
+  // GetWorldInfo summarizes the loaded content.
+  rpc GetWorldInfo(GetWorldInfoRequest) returns (GetWorldInfoResponse);
+}
+
+// Position is one tile on one map.
+message Position {
+  string map = 1;
+  int32 x = 2;
+  int32 y = 3;
+}
+
+// CornerPolicy decides when a diagonal step is allowed.
+enum CornerPolicy {
+  // Unspecified means CORNER_POLICY_STRICT.
+  CORNER_POLICY_UNSPECIFIED = 0;
+  // A diagonal step needs both orthogonal neighbours to be passable.
+  CORNER_POLICY_STRICT = 1;
+  // A diagonal step needs only its destination to be passable.
+  CORNER_POLICY_LOOSE = 2;
+  // Only orthogonal steps are allowed.
+  CORNER_POLICY_NO_DIAGONALS = 3;
+}
+
+// AgentProfile describes what the moving creature can traverse.
+message AgentProfile {
+  // Terrain bits the agent can stand on. Zero means plain walking (1).
+  uint32 terrain_mask = 1;
+  // Lock identifiers (the authored "slaying" of a locked door) the agent may
+  // pass, for example the keys a player carries.
+  repeated string keys = 2;
+  CornerPolicy corners = 3;
+  // Keep the path on the start map: no seams and no exits. Monsters and
+  // NPCs normally stay on their map.
+  bool stay_on_map = 4;
+  // Maps the path must not enter (the start and goal maps are exempt).
+  repeated string avoided_maps = 5;
+}
+
+// FindPathRequest asks for a path from start to a goal.
+message FindPathRequest {
+  Position start = 1;
+  oneof goal {
+    // Reach exactly this tile.
+    Position goal_tile = 2;
+    // Reach any tile of this map.
+    string goal_map = 3;
+  }
+  AgentProfile agent = 4;
+  // Tiles temporarily impassable for this query, such as live occupants.
+  repeated Position blocked = 5;
+  // Bound on expanded search states; zero selects the server default.
+  uint32 max_expanded = 6;
+}
+
+// PathStatus is the outcome of a path search.
+enum PathStatus {
+  PATH_STATUS_UNSPECIFIED = 0;
+  PATH_STATUS_FOUND = 1;
+  // No path exists for this agent.
+  PATH_STATUS_NO_PATH = 2;
+  // The search stopped at max_expanded before finding the goal.
+  PATH_STATUS_LIMIT_REACHED = 3;
+}
+
+// StepKind is how the agent arrives at a step's position.
+enum StepKind {
+  STEP_KIND_UNSPECIFIED = 0;
+  // The start position.
+  STEP_KIND_START = 1;
+  // One move to an adjacent tile on the same map.
+  STEP_KIND_WALK = 2;
+  // One move across a tiled-map seam onto the neighbouring map.
+  STEP_KIND_SEAM = 3;
+  // An exit (stairs, door portal, teleporter) used from the previous step's
+  // tile; the position is the arrival tile.
+  STEP_KIND_EXIT = 4;
+}
+
+// Step is one position along a path.
+message Step {
+  Position position = 1;
+  StepKind kind = 2;
+  // For STEP_KIND_EXIT: true when stepping onto the exit triggers it, false
+  // when the exit must be applied.
+  bool automatic = 3;
+}
+
+// SearchMetrics describes the work one search did.
+message SearchMetrics {
+  uint64 expanded = 1;
+  uint64 generated = 2;
+  uint64 duration_micros = 3;
+}
+
+// FindPathResponse carries the path, start first, when one was found.
+message FindPathResponse {
+  PathStatus status = 1;
+  repeated Step steps = 2;
+  // Number of moves and exits used.
+  uint32 cost = 3;
+  SearchMetrics metrics = 4;
+}
+
+// DescribeMapRequest names a loaded map.
+message DescribeMapRequest {
+  string map = 1;
+}
+
+// TransitionKind is how a transition leaves a map.
+enum TransitionKind {
+  TRANSITION_KIND_UNSPECIFIED = 0;
+  // A whole map border shared with a tiled neighbour.
+  TRANSITION_KIND_SEAM = 1;
+  // An exit object on one tile.
+  TRANSITION_KIND_EXIT = 2;
+}
+
+// Transition is one way off a map.
+message Transition {
+  TransitionKind kind = 1;
+  // For exits, the exit tile; for seams, a border tile just outside the map
+  // in the seam's direction.
+  Position from = 2;
+  // For exits, the arrival tile; for seams, the neighbouring map (x and y
+  // are zero).
+  Position to = 3;
+  bool automatic = 4;
+  string label = 5;
+}
+
+// DescribeMapResponse describes one map.
+message DescribeMapResponse {
+  string map = 1;
+  string name = 2;
+  string region = 3;
+  int32 width = 4;
+  int32 height = 5;
+  uint32 walkable_tiles = 6;
+  repeated Transition transitions = 7;
+}
+
+// GetWorldInfoRequest has no fields.
+message GetWorldInfoRequest {}
+
+// GetWorldInfoResponse summarizes the loaded world.
+message GetWorldInfoResponse {
+  uint32 maps = 1;
+  uint64 tiles = 2;
+  uint32 transitions = 3;
+  // SHA-256 over the loaded map and archetype files, in path order.
+  string content_digest = 4;
+}

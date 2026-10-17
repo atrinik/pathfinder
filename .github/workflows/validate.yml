@@ -1,0 +1,58 @@
+name: Pathfinder validation
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pathfinder-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          cache: true
+      - name: Install pinned tools
+        run: |
+          sh tools/install-ci-dependencies.sh
+          echo "$(go env GOPATH)/bin" >>"${GITHUB_PATH}"
+      - name: Validate
+        run: sh tools/validate.sh
+
+  windows:
+    name: Windows build and tests
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          cache: true
+      - run: go test ./...
+      - run: go build -trimpath ./cmd/pathfinderd
+
+  aggregate:
+    name: Pathfinder validation
+    if: always()
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every supported platform
+        env:
+          LINUX_RESULT: ${{ needs.linux.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+        run: test "${LINUX_RESULT}" = success -a "${WINDOWS_RESULT}" = success
