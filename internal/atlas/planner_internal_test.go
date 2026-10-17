@@ -114,3 +114,20 @@ func TestSimplificationStopsWhenCanceledInItsFinalPass(t *testing.T) {
 		t.Fatalf("canceled final pass: %v", err)
 	}
 }
+
+func TestPathReconstructionStopsWhenCanceled(t *testing.T) {
+	m := openMap(5000, 1)
+	var g gridSearch
+	if err := g.run(context.Background(), m, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	var buf []int32
+	if path, err := g.path(context.Background(), 4999, &buf); err != nil || len(path) != 5000 {
+		t.Fatalf("live: %d tiles, %v", len(path), err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := g.path(ctx, 4999, &buf); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled: %v", err)
+	}
+}

@@ -514,9 +514,10 @@ func TestForcedSameMapExitsOntoTheGoalSearchNothing(t *testing.T) {
 }
 
 func TestConnectorGoalsAreNotExpanded(t *testing.T) {
-	// A forced chain of two teleporters into the goal map: two connectors
-	// expanded, two edges examined and four waypoints; the arrival on the
-	// goal map is recognized without being expanded.
+	// A forced chain of two teleporters into the goal map: the start's one
+	// exit looked at, two connectors expanded, two edges examined and four
+	// waypoints; the arrival on the goal map is recognized without being
+	// expanded.
 	c := fixture.New(t)
 	c.Map("/t/a", ".").Object("teleporter", 0, 0, "slaying /t/b", "hp 0", "sp 0")
 	c.Map("/t/b", ".").Object("teleporter", 0, 0, "slaying /t/c", "hp 0", "sp 0")
@@ -524,7 +525,7 @@ func TestConnectorGoalsAreNotExpanded(t *testing.T) {
 	a, w := build(t, c)
 	goal, _ := w.Lookup("/t/c")
 	p := plan(t, a, atlas.Request{Start: at(t, w, "/t/a", 0, 0), GoalMap: goal})
-	if !p.Found || p.Expanded != 2 || len(p.Waypoints) != 4 || p.Work != 2+2+4 {
+	if !p.Found || p.Expanded != 2 || len(p.Waypoints) != 4 || p.Work != 1+2+2+4 {
 		t.Fatalf("expanded %d, %d waypoints, work %d: %s", p.Expanded, len(p.Waypoints), p.Work, describe(p))
 	}
 }
@@ -545,6 +546,29 @@ func TestEdgeScansSpendWork(t *testing.T) {
 	p := plan(t, a, atlas.Request{Start: at(t, w, "/t/hall", 0, 0), GoalMap: goal})
 	if !p.Found || p.Work < p.Expanded*39 {
 		t.Fatalf("work %d for %d expansions of ~40 edges each", p.Work, p.Expanded)
+	}
+}
+
+func TestStartExitScansSpendWork(t *testing.T) {
+	// Many applied exits on the start tile, only the last of them to the
+	// goal: looking through them costs work, and a small budget runs out
+	// before the direct answer is found.
+	c := fixture.New(t)
+	m := c.Map("/t/hub", "..")
+	for range 200 {
+		m.Object("portal", 0, 0, "slaying /t/dead", "hp 0", "sp 0")
+	}
+	m.Object("portal", 0, 0, "slaying /t/goal", "hp 0", "sp 0")
+	c.Map("/t/dead", ".")
+	c.Map("/t/goal", ".")
+	a, w := build(t, c)
+	goal, _ := w.Lookup("/t/goal")
+	start := at(t, w, "/t/hub", 0, 0)
+	if p := plan(t, a, atlas.Request{Start: start, GoalMap: goal, MaxExpanded: 50}); !p.LimitReached {
+		t.Fatalf("201 exits looked at on a budget of 50: %+v", p)
+	}
+	if p := plan(t, a, atlas.Request{Start: start, GoalMap: goal}); !p.Found || kinds(p) != "start exit goal" || p.Work < 201 {
+		t.Fatalf("unbounded: work %d %s", p.Work, describe(p))
 	}
 }
 

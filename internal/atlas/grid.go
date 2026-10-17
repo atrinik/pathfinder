@@ -179,10 +179,16 @@ func (g *gridSearch) only(m *world.Map, source int32) {
 }
 
 // path returns the tiles from the last run's source to tile, inclusive,
-// reusing *buf for them.
-func (g *gridSearch) path(tile int32, buf *[]int32) []int32 {
+// reusing *buf for them; it stops with the context's error when the context
+// ends.
+func (g *gridSearch) path(ctx context.Context, tile int32, buf *[]int32) ([]int32, error) {
 	n := 0
 	for t := tile; t >= 0; t = g.parent[t] {
+		if n%cancelCheckInterval == cancelCheckInterval-1 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		n++
 	}
 	out := (*buf)[:0]
@@ -190,10 +196,15 @@ func (g *gridSearch) path(tile int32, buf *[]int32) []int32 {
 		out = append(out, 0)
 	}
 	for i, t := n-1, tile; t >= 0; i, t = i-1, g.parent[t] {
+		if i%cancelCheckInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		out[i] = t
 	}
 	*buf = out
-	return out
+	return out, nil
 }
 
 // stepOnto is the cheapest cost of stepping from the searched component
