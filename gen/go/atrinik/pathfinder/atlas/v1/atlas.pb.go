@@ -149,8 +149,13 @@ type Atlas struct {
 	// SHA-256 over the content's map and archetype files, in path order.
 	ContentDigest string `protobuf:"bytes,2,opt,name=content_digest,json=contentDigest,proto3" json:"content_digest,omitempty"`
 	// Every loaded map path, in load (index) order.
-	Maps          []string     `protobuf:"bytes,3,rep,name=maps,proto3" json:"maps,omitempty"`
-	Connectors    []*Connector `protobuf:"bytes,4,rep,name=connectors,proto3" json:"connectors,omitempty"`
+	Maps       []string     `protobuf:"bytes,3,rep,name=maps,proto3" json:"maps,omitempty"`
+	Connectors []*Connector `protobuf:"bytes,4,rep,name=connectors,proto3" json:"connectors,omitempty"`
+	// SHA-256 over the connector graph in the canonical byte encoding the
+	// reader recomputes (every connector's map, x, y and kinds, then each
+	// edge's target, cost, kind, automatic flag and label), so a damaged file
+	// is refused even where its values remain plausible.
+	GraphDigest   []byte `protobuf:"bytes,5,opt,name=graph_digest,json=graphDigest,proto3" json:"graph_digest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -209,6 +214,13 @@ func (x *Atlas) GetMaps() []string {
 func (x *Atlas) GetConnectors() []*Connector {
 	if x != nil {
 		return x.Connectors
+	}
+	return nil
+}
+
+func (x *Atlas) GetGraphDigest() []byte {
+	if x != nil {
+		return x.GraphDigest
 	}
 	return nil
 }
@@ -375,14 +387,15 @@ var File_atrinik_pathfinder_atlas_v1_atlas_proto protoreflect.FileDescriptor
 
 const file_atrinik_pathfinder_atlas_v1_atlas_proto_rawDesc = "" +
 	"\n" +
-	"'atrinik/pathfinder/atlas/v1/atlas.proto\x12\x1batrinik.pathfinder.atlas.v1\"\xa2\x01\n" +
+	"'atrinik/pathfinder/atlas/v1/atlas.proto\x12\x1batrinik.pathfinder.atlas.v1\"\xc5\x01\n" +
 	"\x05Atlas\x12\x16\n" +
 	"\x06format\x18\x01 \x01(\rR\x06format\x12%\n" +
 	"\x0econtent_digest\x18\x02 \x01(\tR\rcontentDigest\x12\x12\n" +
 	"\x04maps\x18\x03 \x03(\tR\x04maps\x12F\n" +
 	"\n" +
 	"connectors\x18\x04 \x03(\v2&.atrinik.pathfinder.atlas.v1.ConnectorR\n" +
-	"connectors\"\x88\x01\n" +
+	"connectors\x12!\n" +
+	"\fgraph_digest\x18\x05 \x01(\fR\vgraphDigest\"\x88\x01\n" +
 	"\tConnector\x12\x10\n" +
 	"\x03map\x18\x01 \x01(\rR\x03map\x12\f\n" +
 	"\x01x\x18\x02 \x01(\x05R\x01x\x12\f\n" +

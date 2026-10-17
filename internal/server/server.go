@@ -152,6 +152,8 @@ func searchError(err error) error {
 	switch {
 	case errors.Is(err, search.ErrBusy), errors.Is(err, atlas.ErrBusy):
 		return status.Error(codes.ResourceExhausted, "every search slot is busy; retry shortly")
+	case errors.Is(err, atlas.ErrCorrupt):
+		return status.Error(codes.DataLoss, err.Error())
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return status.FromContextError(err).Err()
 	default:

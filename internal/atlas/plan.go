@@ -3,6 +3,7 @@ package atlas
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"time"
 
@@ -63,6 +64,8 @@ type Request struct {
 // Plan is a planner answer.
 type Plan struct {
 	Found bool
+	// Work is the budget the plan spent (see Request.MaxExpanded).
+	Work int
 	// LimitReached is set when the plan spent its MaxExpanded work budget.
 	LimitReached bool
 	Waypoints    []Waypoint
@@ -76,6 +79,10 @@ type Plan struct {
 
 // ErrInvalid reports a malformed request.
 var ErrInvalid = errors.New("invalid plan request")
+
+// ErrCorrupt reports an atlas whose walk costs disagree with the content: a
+// re-derived walk cost something other than its edge.
+var ErrCorrupt = errors.New("atlas walk cost disagrees with the content")
 
 // ErrBusy reports that every plan slot of a Planner is in use.
 var ErrBusy = errors.New("every plan slot is busy")
@@ -97,6 +104,7 @@ type scratch struct {
 	gen              uint32
 	open             tileHeap
 	path             []int32 // reconstructed walk legs
+	chain            []int32 // the connector chain of a plan
 	keep             []bool  // simplification marks
 	kept             []int32 // simplified waypoint indexes
 }
@@ -172,7 +180,7 @@ type planner struct {
 	s *scratch
 	// work is the plan's remaining budget: connectors expanded, tiles
 	// searched and waypoints emitted each spend one.
-	work int
+	work, budget int
 	// fromExit is set when the start is an automatic exit, which carries the
 	// walker onward at once.
 	fromExit bool
@@ -195,9 +203,13 @@ var errLimit = errors.New("plan work limit reached")
 
 func (p *planner) run(ctx context.Context, started time.Time) (Plan, error) {
 	plan, err := p.search(ctx, started)
+	if err == nil && p.work < 0 {
+		err = errLimit
+	}
 	if errors.Is(err, errLimit) {
 		return Plan{LimitReached: true, Expanded: plan.Expanded, Duration: time.Since(started)}, nil
 	}
+	plan.Work = p.budget - p.work
 	return plan, err
 }
 
@@ -207,11 +219,18 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 	if r.MaxExpanded > 0 {
 		p.work = r.MaxExpanded
 	}
+	p.budget = p.work
 	p.finishSeam = -1
 	sm := r.Start.Map
 	startTile := sm.Tile(r.Start.X, r.Start.Y)
 	start, goalSearch, side := &p.s.start, &p.s.goal, &p.s.leg
 	p.fromExit = isAutomaticExitTile(sm, startTile)
+	// A goal the start already satisfies needs no search.
+	if !p.fromExit && (r.GoalMap == sm ||
+		(r.GoalTile != nil && r.GoalTile.Map == sm && sm.Tile(r.GoalTile.X, r.GoalTile.Y) == startTile)) {
+		start.only(sm, startTile)
+		return p.assemble(ctx, nil, 0, started, 0)
+	}
 	if p.fromExit {
 		start.only(sm, startTile)
 	} else if err := start.run(ctx, sm, startTile, &p.work); err != nil {
@@ -246,9 +265,6 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 			}
 		}
 	} else {
-		if sm == r.GoalMap && !p.fromExit {
-			return p.assemble(ctx, nil, 0, started, 0)
-		}
 		goalCost = func(id int32) (int32, bool) {
 			c := a.Connectors[id]
 			return 0, c.Map == r.GoalMap.Index && c.Component >= 0
@@ -342,10 +358,11 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 	if best == math.MaxInt32 {
 		return Plan{Expanded: expanded, Duration: time.Since(started)}, nil
 	}
-	var chain []int32
+	chain := s.chain[:0]
 	for id := finish; id != noConnector; id = s.parent[id] {
 		chain = append(chain, id)
 	}
+	s.chain = chain
 	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
 		chain[i], chain[j] = chain[j], chain[i]
 	}
@@ -425,7 +442,9 @@ func (p *planner) avoided(m int32) bool {
 func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, started time.Time, expanded int) (Plan, error) {
 	a, r := p.a, p.r
 	plan := Plan{Found: true, Cost: cost, Expanded: expanded}
+	// Every waypoint spends a unit of work; run reports an overspent budget.
 	add := func(m *world.Map, tile int32, kind WaypointKind) {
+		p.work--
 		plan.Waypoints = append(plan.Waypoints, Waypoint{Map: m, X: tile % m.Width, Y: tile / m.Width, Kind: kind})
 	}
 	// transition marks the last waypoint as where a transition is used; the
@@ -433,6 +452,7 @@ func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, start
 	transition := func(kind WaypointKind, automatic bool, label string) {
 		last := plan.Waypoints[len(plan.Waypoints)-1]
 		if last.Kind == Start {
+			p.work--
 			plan.Waypoints = append(plan.Waypoints, last)
 		}
 		at := &plan.Waypoints[len(plan.Waypoints)-1]
@@ -492,6 +512,14 @@ func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, start
 		}
 	}
 	for i := 0; i+1 < len(chain); i++ {
+		if i%256 == 0 {
+			if err := ctx.Err(); err != nil {
+				return Plan{}, err
+			}
+			if p.work < 0 {
+				return Plan{}, errLimit
+			}
+		}
 		u, v := chain[i], chain[i+1]
 		edge := a.edge(u, v)
 		cu, cv := a.Connectors[u], a.Connectors[v]
@@ -500,6 +528,17 @@ func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, start
 		case WalkEdge:
 			if err := leg.run(ctx, mu, mu.Tile(cu.X, cu.Y), &p.work); err != nil {
 				return Plan{}, err
+			}
+			// The walk is re-derived from the content, so its real cost
+			// must be the edge's; anything else is a damaged atlas.
+			tile := mv.Tile(cv.X, cv.Y)
+			real := leg.cost(tile)
+			if cv.Component < 0 {
+				real, _, _ = leg.stepOnto(mv, tile)
+			}
+			if real != edge.Cost {
+				return Plan{}, fmt.Errorf("%w: %s %d,%d to %d,%d costs %d, the atlas says %d",
+					ErrCorrupt, mu.Path, cu.X, cu.Y, cv.X, cv.Y, real, edge.Cost)
 			}
 			if err := p.walkTo(&plan, leg, mu, cv, r.Spacing); err != nil {
 				return Plan{}, err

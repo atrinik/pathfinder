@@ -16,6 +16,11 @@ message Atlas {
   // Every loaded map path, in load (index) order.
   repeated string maps = 3;
   repeated Connector connectors = 4;
+  // SHA-256 over the connector graph in the canonical byte encoding the
+  // reader recomputes (every connector's map, x, y and kinds, then each
+  // edge's target, cost, kind, automatic flag and label), so a damaged file
+  // is refused even where its values remain plausible.
+  bytes graph_digest = 5;
 }
 
 // ConnectorKind flags; one connector may carry several.

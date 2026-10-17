@@ -1,6 +1,9 @@
 package atlas
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
@@ -44,7 +47,44 @@ func (a *Atlas) Encode() *atlasv1.Atlas {
 		}
 		f.Connectors[id] = pc
 	}
+	Stamp(f)
 	return f
+}
+
+// Stamp sets an atlas file message's graph digest from its connectors.
+func Stamp(f *atlasv1.Atlas) {
+	f.GraphDigest = graphDigest(f)
+}
+
+// graphDigest hashes the connector graph in a canonical byte encoding.
+func graphDigest(f *atlasv1.Atlas) []byte {
+	h := sha256.New()
+	var buf [4]byte
+	put := func(v uint32) {
+		binary.BigEndian.PutUint32(buf[:], v)
+		h.Write(buf[:])
+	}
+	put(uint32(len(f.GetConnectors())))
+	for _, c := range f.GetConnectors() {
+		put(c.GetMap())
+		put(uint32(c.GetX()))
+		put(uint32(c.GetY()))
+		put(c.GetKinds())
+		put(uint32(len(c.GetEdges())))
+		for _, e := range c.GetEdges() {
+			put(e.GetTo())
+			put(e.GetCost())
+			put(uint32(e.GetKind()))
+			if e.GetAutomatic() {
+				put(1)
+			} else {
+				put(0)
+			}
+			put(uint32(len(e.GetLabel())))
+			h.Write([]byte(e.GetLabel()))
+		}
+	}
+	return h.Sum(nil)
 }
 
 // Save writes the atlas file to path.
@@ -154,6 +194,12 @@ func Decode(w *world.World, f *atlasv1.Atlas) (*Atlas, error) {
 			return nil, fmt.Errorf("connector %d: %d walks are missing", id, len(required))
 		}
 		a.Out[id] = append(transitions, walks...)
+	}
+	// Last, so the checks above report what is structurally wrong: walk
+	// costs can only be checked against their bounds, and the digest catches
+	// any other damage to them.
+	if !bytes.Equal(f.GetGraphDigest(), graphDigest(f)) {
+		return nil, errors.New("connector graph digest does not match its contents")
 	}
 	a.stats = a.count()
 	a.Loaded = true

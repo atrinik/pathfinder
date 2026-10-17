@@ -16,6 +16,7 @@ func TestSearchErrorsMapToStatusCodes(t *testing.T) {
 		search.ErrBusy:           codes.ResourceExhausted,
 		atlas.ErrBusy:            codes.ResourceExhausted,
 		atlas.ErrInvalid:         codes.InvalidArgument,
+		atlas.ErrCorrupt:         codes.DataLoss,
 		context.Canceled:         codes.Canceled,
 		context.DeadlineExceeded: codes.DeadlineExceeded,
 		search.ErrInvalid:        codes.InvalidArgument,

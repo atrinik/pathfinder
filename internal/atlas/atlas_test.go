@@ -221,6 +221,45 @@ func TestWaypointsKeepBendsAroundObstacles(t *testing.T) {
 	checkWalkable(t, p)
 }
 
+func TestSatisfiedGoalsNeedNoBudget(t *testing.T) {
+	c := fixture.New(t)
+	c.Map("/t/plain", strings.Repeat(".", 30), strings.Repeat(".", 30))
+	a, w := build(t, c)
+	start := at(t, w, "/t/plain", 3, 1)
+	for name, r := range map[string]atlas.Request{
+		"goal map":  {Start: start, GoalMap: start.Map, MaxExpanded: 1},
+		"goal tile": {Start: start, GoalTile: &start, MaxExpanded: 1},
+	} {
+		if p := plan(t, a, r); !p.Found || p.Cost != 0 || kinds(p) != "goal" && kinds(p) != "start goal" {
+			t.Errorf("%s: %+v %s", name, p, describe(p))
+		}
+	}
+}
+
+func TestPlanWorkCountsEveryWaypoint(t *testing.T) {
+	// A chain of portals: few tiles to search, many transition waypoints.
+	c := fixture.New(t)
+	for i := range 12 {
+		c.Map(fmt.Sprintf("/t/hop%d", i), ".").Object("portal", 0, 0, fmt.Sprintf("slaying /t/hop%d", i+1), "hp 0", "sp 0")
+	}
+	c.Map("/t/hop12", ".")
+	a, w := build(t, c)
+	goal, _ := w.Lookup("/t/hop12")
+	r := atlas.Request{Start: at(t, w, "/t/hop0", 0, 0), GoalMap: goal}
+	full := plan(t, a, r)
+	if !full.Found || full.Work < full.Expanded+len(full.Waypoints) {
+		t.Fatalf("work %d for %d connectors and %d waypoints", full.Work, full.Expanded, len(full.Waypoints))
+	}
+	r.MaxExpanded = full.Work
+	if p := plan(t, a, r); !p.Found || p.Work != full.Work {
+		t.Fatalf("exact budget: %+v", p)
+	}
+	r.MaxExpanded = full.Work - 1
+	if p := plan(t, a, r); p.Found || !p.LimitReached {
+		t.Fatalf("one short: %+v", p)
+	}
+}
+
 func TestPlansSpendOneWorkBudget(t *testing.T) {
 	// A long snake: every waypoint of a spacing-1 plan costs work too.
 	rows := []string{}

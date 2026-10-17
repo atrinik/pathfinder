@@ -114,12 +114,14 @@ search's routes at the same cost; a seam is crossed at the middle of its run.
 file from the `atlas` command (format
 [`proto/atrinik/pathfinder/atlas/v1/atlas.proto`](proto/atrinik/pathfinder/atlas/v1/atlas.proto)).
 A file is stamped with the content digest and map list and is refused for any
-other content. Loading recomputes the connectors, exits and seams (they
+other content, and carries a SHA-256 digest of its connector graph that loading
+verifies. Loading also recomputes the connectors, exits and seams (they
 follow cheaply from the content) and requires the file to match them exactly;
 only the costly walks are read: exactly one from each connector to every
 other connector walkable from its component, so a damaged file is refused
 rather than silently losing or inventing routes.
-Files are byte-for-byte reproducible. Like path searches, at most
+A plan also checks each walk it re-derives against its edge's cost and fails
+with `DATA_LOSS` on a mismatch. Files are byte-for-byte reproducible. Like path searches, at most
 `-max-concurrent` plans run at once, each reusing its own scratch space, and
 a canceled request stops its plan.
 

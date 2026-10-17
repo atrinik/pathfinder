@@ -2,10 +2,12 @@ package atlas_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	atlasv1 "github.com/atrinik/pathfinder/gen/go/atrinik/pathfinder/atlas/v1"
@@ -185,6 +187,7 @@ func TestMalformedAtlasFilesAreRejected(t *testing.T) {
 	} {
 		f := atlas.Build(w).Encode()
 		mutate(f)
+		atlas.Stamp(f) // reach the structural checks, not just the digest
 		if _, err := atlas.Decode(w, f); err == nil || errors.Is(err, atlas.ErrMismatch) {
 			t.Errorf("%s: %v", name, err)
 		}
@@ -232,5 +235,40 @@ func TestAtlasFilesCannotWalkBetweenComponents(t *testing.T) {
 	})
 	if _, err := atlas.Decode(w, f); err == nil {
 		t.Fatal("accepted a walk through a wall")
+	}
+}
+
+func TestAtlasFilesCarryAGraphDigestAndPlansCheckWalkCosts(t *testing.T) {
+	_, w := fileWorld(t)
+	inflate := func(f *atlasv1.Atlas) {
+		for _, c := range f.Connectors {
+			for _, e := range c.Edges {
+				if e.Kind == atlasv1.EdgeKind_EDGE_KIND_WALK {
+					e.Cost++ // still within the structural bounds
+				}
+			}
+		}
+	}
+	f := atlas.Build(w).Encode()
+	inflate(f)
+	if _, err := atlas.Decode(w, f); err == nil || !strings.Contains(err.Error(), "digest") {
+		t.Fatalf("plausible damage: %v", err)
+	}
+	// A file re-stamped after the damage loads, but a plan that re-derives
+	// one of its walks notices.
+	f = atlas.Build(w).Encode()
+	inflate(f)
+	atlas.Stamp(f)
+	damaged, err := atlas.Decode(w, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	east, _ := w.Lookup("/w/world_1_0")
+	_, err = damaged.Plan(context.Background(), atlas.Request{Start: at(t, w, "/t/inn", 2, 1), GoalMap: east})
+	if !errors.Is(err, atlas.ErrCorrupt) {
+		t.Fatalf("plan over damaged walks: %v", err)
+	}
+	if p := plan(t, atlas.Build(w), atlas.Request{Start: at(t, w, "/t/inn", 2, 1), GoalMap: east}); !p.Found {
+		t.Fatal("the intact atlas finds the route")
 	}
 }
