@@ -26,3 +26,4 @@ git diff --exit-code -- gen/ || {
 }
 govulncheck ./...
 go build -trimpath -o /dev/null ./cmd/pathfinderd
+go build -trimpath -o /dev/null ./cmd/atlas

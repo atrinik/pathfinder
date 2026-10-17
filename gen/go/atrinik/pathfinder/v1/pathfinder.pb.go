@@ -252,6 +252,128 @@ func (TransitionKind) EnumDescriptor() ([]byte, []int) {
 	return file_atrinik_pathfinder_v1_pathfinder_proto_rawDescGZIP(), []int{3}
 }
 
+// WaypointKind is what to do at a waypoint.
+type WaypointKind int32
+
+const (
+	WaypointKind_WAYPOINT_KIND_UNSPECIFIED WaypointKind = 0
+	// Where the route begins.
+	WaypointKind_WAYPOINT_KIND_START WaypointKind = 1
+	// An intermediate point to walk to.
+	WaypointKind_WAYPOINT_KIND_WALK WaypointKind = 2
+	// An exit tile: walk onto it, then apply the exit (or, when automatic,
+	// stepping onto it is enough).
+	WaypointKind_WAYPOINT_KIND_EXIT WaypointKind = 3
+	// A border tile: walk onto it, then step across into the neighbouring map
+	// towards the next waypoint.
+	WaypointKind_WAYPOINT_KIND_SEAM WaypointKind = 4
+	// Where an exit or seam crossing lands.
+	WaypointKind_WAYPOINT_KIND_ARRIVE WaypointKind = 5
+	// The destination.
+	WaypointKind_WAYPOINT_KIND_GOAL WaypointKind = 6
+)
+
+// Enum value maps for WaypointKind.
+var (
+	WaypointKind_name = map[int32]string{
+		0: "WAYPOINT_KIND_UNSPECIFIED",
+		1: "WAYPOINT_KIND_START",
+		2: "WAYPOINT_KIND_WALK",
+		3: "WAYPOINT_KIND_EXIT",
+		4: "WAYPOINT_KIND_SEAM",
+		5: "WAYPOINT_KIND_ARRIVE",
+		6: "WAYPOINT_KIND_GOAL",
+	}
+	WaypointKind_value = map[string]int32{
+		"WAYPOINT_KIND_UNSPECIFIED": 0,
+		"WAYPOINT_KIND_START":       1,
+		"WAYPOINT_KIND_WALK":        2,
+		"WAYPOINT_KIND_EXIT":        3,
+		"WAYPOINT_KIND_SEAM":        4,
+		"WAYPOINT_KIND_ARRIVE":      5,
+		"WAYPOINT_KIND_GOAL":        6,
+	}
+)
+
+func (x WaypointKind) Enum() *WaypointKind {
+	p := new(WaypointKind)
+	*p = x
+	return p
+}
+
+func (x WaypointKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (WaypointKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_atrinik_pathfinder_v1_pathfinder_proto_enumTypes[4].Descriptor()
+}
+
+func (WaypointKind) Type() protoreflect.EnumType {
+	return &file_atrinik_pathfinder_v1_pathfinder_proto_enumTypes[4]
+}
+
+func (x WaypointKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use WaypointKind.Descriptor instead.
+func (WaypointKind) EnumDescriptor() ([]byte, []int) {
+	return file_atrinik_pathfinder_v1_pathfinder_proto_rawDescGZIP(), []int{4}
+}
+
+// AtlasSource is where the served atlas came from.
+type AtlasSource int32
+
+const (
+	AtlasSource_ATLAS_SOURCE_UNSPECIFIED AtlasSource = 0
+	// Built from the loaded content at startup.
+	AtlasSource_ATLAS_SOURCE_BUILT AtlasSource = 1
+	// Loaded from a prebuilt atlas file matching the loaded content.
+	AtlasSource_ATLAS_SOURCE_FILE AtlasSource = 2
+)
+
+// Enum value maps for AtlasSource.
+var (
+	AtlasSource_name = map[int32]string{
+		0: "ATLAS_SOURCE_UNSPECIFIED",
+		1: "ATLAS_SOURCE_BUILT",
+		2: "ATLAS_SOURCE_FILE",
+	}
+	AtlasSource_value = map[string]int32{
+		"ATLAS_SOURCE_UNSPECIFIED": 0,
+		"ATLAS_SOURCE_BUILT":       1,
+		"ATLAS_SOURCE_FILE":        2,
+	}
+)
+
+func (x AtlasSource) Enum() *AtlasSource {
+	p := new(AtlasSource)
+	*p = x
+	return p
+}
+
+func (x AtlasSource) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AtlasSource) Descriptor() protoreflect.EnumDescriptor {
+	return file_atrinik_pathfinder_v1_pathfinder_proto_enumTypes[5].Descriptor()
+}
+
+func (AtlasSource) Type() protoreflect.EnumType {
+	return &file_atrinik_pathfinder_v1_pathfinder_proto_enumTypes[5]
+}
+
+func (x AtlasSource) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AtlasSource.Descriptor instead.
+func (AtlasSource) EnumDescriptor() ([]byte, []int) {
+	return file_atrinik_pathfinder_v1_pathfinder_proto_rawDescGZIP(), []int{5}
+}
+
 // Position is one tile on one map.
 type Position struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1035,6 +1157,459 @@ func (x *GetWorldInfoResponse) GetContentDigest() string {
 	return ""
 }
 
+// PlanRequest asks for a waypoint route from start to a goal.
+type PlanRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Start *Position              `protobuf:"bytes,1,opt,name=start,proto3" json:"start,omitempty"`
+	// Types that are valid to be assigned to Goal:
+	//
+	//	*PlanRequest_GoalTile
+	//	*PlanRequest_GoalMap
+	Goal isPlanRequest_Goal `protobuf_oneof:"goal"`
+	// Maps the route must not enter (the start and goal maps are exempt).
+	AvoidedMaps []string `protobuf:"bytes,4,rep,name=avoided_maps,json=avoidedMaps,proto3" json:"avoided_maps,omitempty"`
+	// Greatest distance, in tiles (Chebyshev), between consecutive waypoints
+	// on one map. Zero selects 7, within the client's click-to-move reach.
+	Spacing uint32 `protobuf:"varint,5,opt,name=spacing,proto3" json:"spacing,omitempty"`
+	// Bound on the plan's work: each atlas connector expanded or looked at,
+	// edge examined, tile searched and waypoint returned counts one. Zero
+	// selects the server default, and larger values are capped by it.
+	MaxExpanded   uint32 `protobuf:"varint,6,opt,name=max_expanded,json=maxExpanded,proto3" json:"max_expanded,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlanRequest) Reset() {
+	*x = PlanRequest{}
+	mi := &file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlanRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlanRequest) ProtoMessage() {}
+
+func (x *PlanRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlanRequest.ProtoReflect.Descriptor instead.
+func (*PlanRequest) Descriptor() ([]byte, []int) {
+	return file_atrinik_pathfinder_v1_pathfinder_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *PlanRequest) GetStart() *Position {
+	if x != nil {
+		return x.Start
+	}
+	return nil
+}
+
+func (x *PlanRequest) GetGoal() isPlanRequest_Goal {
+	if x != nil {
+		return x.Goal
+	}
+	return nil
+}
+
+func (x *PlanRequest) GetGoalTile() *Position {
+	if x != nil {
+		if x, ok := x.Goal.(*PlanRequest_GoalTile); ok {
+			return x.GoalTile
+		}
+	}
+	return nil
+}
+
+func (x *PlanRequest) GetGoalMap() string {
+	if x != nil {
+		if x, ok := x.Goal.(*PlanRequest_GoalMap); ok {
+			return x.GoalMap
+		}
+	}
+	return ""
+}
+
+func (x *PlanRequest) GetAvoidedMaps() []string {
+	if x != nil {
+		return x.AvoidedMaps
+	}
+	return nil
+}
+
+func (x *PlanRequest) GetSpacing() uint32 {
+	if x != nil {
+		return x.Spacing
+	}
+	return 0
+}
+
+func (x *PlanRequest) GetMaxExpanded() uint32 {
+	if x != nil {
+		return x.MaxExpanded
+	}
+	return 0
+}
+
+type isPlanRequest_Goal interface {
+	isPlanRequest_Goal()
+}
+
+type PlanRequest_GoalTile struct {
+	// Reach exactly this tile.
+	GoalTile *Position `protobuf:"bytes,2,opt,name=goal_tile,json=goalTile,proto3,oneof"`
+}
+
+type PlanRequest_GoalMap struct {
+	// Reach any tile of this map.
+	GoalMap string `protobuf:"bytes,3,opt,name=goal_map,json=goalMap,proto3,oneof"`
+}
+
+func (*PlanRequest_GoalTile) isPlanRequest_Goal() {}
+
+func (*PlanRequest_GoalMap) isPlanRequest_Goal() {}
+
+// Waypoint is one point of a planned route.
+type Waypoint struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Position *Position              `protobuf:"bytes,1,opt,name=position,proto3" json:"position,omitempty"`
+	Kind     WaypointKind           `protobuf:"varint,2,opt,name=kind,proto3,enum=atrinik.pathfinder.v1.WaypointKind" json:"kind,omitempty"`
+	// For WAYPOINT_KIND_EXIT: true when stepping onto the exit triggers it.
+	Automatic bool `protobuf:"varint,3,opt,name=automatic,proto3" json:"automatic,omitempty"`
+	// For WAYPOINT_KIND_EXIT: the exit's authored name, such as "stairs".
+	Label         string `protobuf:"bytes,4,opt,name=label,proto3" json:"label,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Waypoint) Reset() {
+	*x = Waypoint{}
+	mi := &file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Waypoint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Waypoint) ProtoMessage() {}
+
+func (x *Waypoint) ProtoReflect() protoreflect.Message {
+	mi := &file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Waypoint.ProtoReflect.Descriptor instead.
+func (*Waypoint) Descriptor() ([]byte, []int) {
+	return file_atrinik_pathfinder_v1_pathfinder_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *Waypoint) GetPosition() *Position {
+	if x != nil {
+		return x.Position
+	}
+	return nil
+}
+
+func (x *Waypoint) GetKind() WaypointKind {
+	if x != nil {
+		return x.Kind
+	}
+	return WaypointKind_WAYPOINT_KIND_UNSPECIFIED
+}
+
+func (x *Waypoint) GetAutomatic() bool {
+	if x != nil {
+		return x.Automatic
+	}
+	return false
+}
+
+func (x *Waypoint) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+// PlanMetrics describes the work one plan did.
+type PlanMetrics struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Atlas connectors expanded.
+	Expanded       uint64 `protobuf:"varint,1,opt,name=expanded,proto3" json:"expanded,omitempty"`
+	DurationMicros uint64 `protobuf:"varint,2,opt,name=duration_micros,json=durationMicros,proto3" json:"duration_micros,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *PlanMetrics) Reset() {
+	*x = PlanMetrics{}
+	mi := &file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlanMetrics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlanMetrics) ProtoMessage() {}
+
+func (x *PlanMetrics) ProtoReflect() protoreflect.Message {
+	mi := &file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlanMetrics.ProtoReflect.Descriptor instead.
+func (*PlanMetrics) Descriptor() ([]byte, []int) {
+	return file_atrinik_pathfinder_v1_pathfinder_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PlanMetrics) GetExpanded() uint64 {
+	if x != nil {
+		return x.Expanded
+	}
+	return 0
+}
+
+func (x *PlanMetrics) GetDurationMicros() uint64 {
+	if x != nil {
+		return x.DurationMicros
+	}
+	return 0
+}
+
+// PlanResponse carries the waypoints, start first, when a route was found.
+type PlanResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// PATH_STATUS_FOUND, PATH_STATUS_NO_PATH or PATH_STATUS_LIMIT_REACHED.
+	Status    PathStatus  `protobuf:"varint,1,opt,name=status,proto3,enum=atrinik.pathfinder.v1.PathStatus" json:"status,omitempty"`
+	Waypoints []*Waypoint `protobuf:"bytes,2,rep,name=waypoints,proto3" json:"waypoints,omitempty"`
+	// Road-weighted cost in thirds of a move: a step along a road costs 2,
+	// any other step or an exit or seam crossing 3.
+	Cost uint32 `protobuf:"varint,3,opt,name=cost,proto3" json:"cost,omitempty"`
+	// Tile moves along the route, exits and seam crossings included.
+	Tiles         uint32       `protobuf:"varint,4,opt,name=tiles,proto3" json:"tiles,omitempty"`
+	Metrics       *PlanMetrics `protobuf:"bytes,5,opt,name=metrics,proto3" json:"metrics,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlanResponse) Reset() {
+	*x = PlanResponse{}
+	mi := &file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlanResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlanResponse) ProtoMessage() {}
+
+func (x *PlanResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlanResponse.ProtoReflect.Descriptor instead.
+func (*PlanResponse) Descriptor() ([]byte, []int) {
+	return file_atrinik_pathfinder_v1_pathfinder_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *PlanResponse) GetStatus() PathStatus {
+	if x != nil {
+		return x.Status
+	}
+	return PathStatus_PATH_STATUS_UNSPECIFIED
+}
+
+func (x *PlanResponse) GetWaypoints() []*Waypoint {
+	if x != nil {
+		return x.Waypoints
+	}
+	return nil
+}
+
+func (x *PlanResponse) GetCost() uint32 {
+	if x != nil {
+		return x.Cost
+	}
+	return 0
+}
+
+func (x *PlanResponse) GetTiles() uint32 {
+	if x != nil {
+		return x.Tiles
+	}
+	return 0
+}
+
+func (x *PlanResponse) GetMetrics() *PlanMetrics {
+	if x != nil {
+		return x.Metrics
+	}
+	return nil
+}
+
+// GetAtlasInfoRequest has no fields.
+type GetAtlasInfoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAtlasInfoRequest) Reset() {
+	*x = GetAtlasInfoRequest{}
+	mi := &file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAtlasInfoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAtlasInfoRequest) ProtoMessage() {}
+
+func (x *GetAtlasInfoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAtlasInfoRequest.ProtoReflect.Descriptor instead.
+func (*GetAtlasInfoRequest) Descriptor() ([]byte, []int) {
+	return file_atrinik_pathfinder_v1_pathfinder_proto_rawDescGZIP(), []int{15}
+}
+
+// GetAtlasInfoResponse summarizes the atlas.
+type GetAtlasInfoResponse struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Connectors uint32                 `protobuf:"varint,1,opt,name=connectors,proto3" json:"connectors,omitempty"`
+	Edges      uint32                 `protobuf:"varint,2,opt,name=edges,proto3" json:"edges,omitempty"`
+	RoadTiles  uint32                 `protobuf:"varint,3,opt,name=road_tiles,json=roadTiles,proto3" json:"road_tiles,omitempty"`
+	// The content digest the atlas was built from (that of GetWorldInfo).
+	ContentDigest string      `protobuf:"bytes,4,opt,name=content_digest,json=contentDigest,proto3" json:"content_digest,omitempty"`
+	Source        AtlasSource `protobuf:"varint,5,opt,name=source,proto3,enum=atrinik.pathfinder.v1.AtlasSource" json:"source,omitempty"`
+	// How long building or loading the atlas took.
+	DurationMicros uint64 `protobuf:"varint,6,opt,name=duration_micros,json=durationMicros,proto3" json:"duration_micros,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *GetAtlasInfoResponse) Reset() {
+	*x = GetAtlasInfoResponse{}
+	mi := &file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAtlasInfoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAtlasInfoResponse) ProtoMessage() {}
+
+func (x *GetAtlasInfoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAtlasInfoResponse.ProtoReflect.Descriptor instead.
+func (*GetAtlasInfoResponse) Descriptor() ([]byte, []int) {
+	return file_atrinik_pathfinder_v1_pathfinder_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *GetAtlasInfoResponse) GetConnectors() uint32 {
+	if x != nil {
+		return x.Connectors
+	}
+	return 0
+}
+
+func (x *GetAtlasInfoResponse) GetEdges() uint32 {
+	if x != nil {
+		return x.Edges
+	}
+	return 0
+}
+
+func (x *GetAtlasInfoResponse) GetRoadTiles() uint32 {
+	if x != nil {
+		return x.RoadTiles
+	}
+	return 0
+}
+
+func (x *GetAtlasInfoResponse) GetContentDigest() string {
+	if x != nil {
+		return x.ContentDigest
+	}
+	return ""
+}
+
+func (x *GetAtlasInfoResponse) GetSource() AtlasSource {
+	if x != nil {
+		return x.Source
+	}
+	return AtlasSource_ATLAS_SOURCE_UNSPECIFIED
+}
+
+func (x *GetAtlasInfoResponse) GetDurationMicros() uint64 {
+	if x != nil {
+		return x.DurationMicros
+	}
+	return 0
+}
+
 var File_atrinik_pathfinder_v1_pathfinder_proto protoreflect.FileDescriptor
 
 const file_atrinik_pathfinder_v1_pathfinder_proto_rawDesc = "" +
@@ -1093,7 +1668,40 @@ const file_atrinik_pathfinder_v1_pathfinder_proto_rawDesc = "" +
 	"\x04maps\x18\x01 \x01(\rR\x04maps\x12\x14\n" +
 	"\x05tiles\x18\x02 \x01(\x04R\x05tiles\x12 \n" +
 	"\vtransitions\x18\x03 \x01(\rR\vtransitions\x12%\n" +
-	"\x0econtent_digest\x18\x04 \x01(\tR\rcontentDigest*\x80\x01\n" +
+	"\x0econtent_digest\x18\x04 \x01(\tR\rcontentDigest\"\x89\x02\n" +
+	"\vPlanRequest\x125\n" +
+	"\x05start\x18\x01 \x01(\v2\x1f.atrinik.pathfinder.v1.PositionR\x05start\x12>\n" +
+	"\tgoal_tile\x18\x02 \x01(\v2\x1f.atrinik.pathfinder.v1.PositionH\x00R\bgoalTile\x12\x1b\n" +
+	"\bgoal_map\x18\x03 \x01(\tH\x00R\agoalMap\x12!\n" +
+	"\favoided_maps\x18\x04 \x03(\tR\vavoidedMaps\x12\x18\n" +
+	"\aspacing\x18\x05 \x01(\rR\aspacing\x12!\n" +
+	"\fmax_expanded\x18\x06 \x01(\rR\vmaxExpandedB\x06\n" +
+	"\x04goal\"\xb4\x01\n" +
+	"\bWaypoint\x12;\n" +
+	"\bposition\x18\x01 \x01(\v2\x1f.atrinik.pathfinder.v1.PositionR\bposition\x127\n" +
+	"\x04kind\x18\x02 \x01(\x0e2#.atrinik.pathfinder.v1.WaypointKindR\x04kind\x12\x1c\n" +
+	"\tautomatic\x18\x03 \x01(\bR\tautomatic\x12\x14\n" +
+	"\x05label\x18\x04 \x01(\tR\x05label\"R\n" +
+	"\vPlanMetrics\x12\x1a\n" +
+	"\bexpanded\x18\x01 \x01(\x04R\bexpanded\x12'\n" +
+	"\x0fduration_micros\x18\x02 \x01(\x04R\x0edurationMicros\"\xf0\x01\n" +
+	"\fPlanResponse\x129\n" +
+	"\x06status\x18\x01 \x01(\x0e2!.atrinik.pathfinder.v1.PathStatusR\x06status\x12=\n" +
+	"\twaypoints\x18\x02 \x03(\v2\x1f.atrinik.pathfinder.v1.WaypointR\twaypoints\x12\x12\n" +
+	"\x04cost\x18\x03 \x01(\rR\x04cost\x12\x14\n" +
+	"\x05tiles\x18\x04 \x01(\rR\x05tiles\x12<\n" +
+	"\ametrics\x18\x05 \x01(\v2\".atrinik.pathfinder.v1.PlanMetricsR\ametrics\"\x15\n" +
+	"\x13GetAtlasInfoRequest\"\xf7\x01\n" +
+	"\x14GetAtlasInfoResponse\x12\x1e\n" +
+	"\n" +
+	"connectors\x18\x01 \x01(\rR\n" +
+	"connectors\x12\x14\n" +
+	"\x05edges\x18\x02 \x01(\rR\x05edges\x12\x1d\n" +
+	"\n" +
+	"road_tiles\x18\x03 \x01(\rR\troadTiles\x12%\n" +
+	"\x0econtent_digest\x18\x04 \x01(\tR\rcontentDigest\x12:\n" +
+	"\x06source\x18\x05 \x01(\x0e2\".atrinik.pathfinder.v1.AtlasSourceR\x06source\x12'\n" +
+	"\x0fduration_micros\x18\x06 \x01(\x04R\x0edurationMicros*\x80\x01\n" +
 	"\fCornerPolicy\x12\x1d\n" +
 	"\x19CORNER_POLICY_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14CORNER_POLICY_STRICT\x10\x01\x12\x17\n" +
@@ -1114,11 +1722,25 @@ const file_atrinik_pathfinder_v1_pathfinder_proto_rawDesc = "" +
 	"\x0eTransitionKind\x12\x1f\n" +
 	"\x1bTRANSITION_KIND_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14TRANSITION_KIND_SEAM\x10\x01\x12\x18\n" +
-	"\x14TRANSITION_KIND_EXIT\x10\x022\xbf\x02\n" +
+	"\x14TRANSITION_KIND_EXIT\x10\x02*\xc0\x01\n" +
+	"\fWaypointKind\x12\x1d\n" +
+	"\x19WAYPOINT_KIND_UNSPECIFIED\x10\x00\x12\x17\n" +
+	"\x13WAYPOINT_KIND_START\x10\x01\x12\x16\n" +
+	"\x12WAYPOINT_KIND_WALK\x10\x02\x12\x16\n" +
+	"\x12WAYPOINT_KIND_EXIT\x10\x03\x12\x16\n" +
+	"\x12WAYPOINT_KIND_SEAM\x10\x04\x12\x18\n" +
+	"\x14WAYPOINT_KIND_ARRIVE\x10\x05\x12\x16\n" +
+	"\x12WAYPOINT_KIND_GOAL\x10\x06*Z\n" +
+	"\vAtlasSource\x12\x1c\n" +
+	"\x18ATLAS_SOURCE_UNSPECIFIED\x10\x00\x12\x16\n" +
+	"\x12ATLAS_SOURCE_BUILT\x10\x01\x12\x15\n" +
+	"\x11ATLAS_SOURCE_FILE\x10\x022\xf9\x03\n" +
 	"\x11PathfinderService\x12[\n" +
 	"\bFindPath\x12&.atrinik.pathfinder.v1.FindPathRequest\x1a'.atrinik.pathfinder.v1.FindPathResponse\x12d\n" +
 	"\vDescribeMap\x12).atrinik.pathfinder.v1.DescribeMapRequest\x1a*.atrinik.pathfinder.v1.DescribeMapResponse\x12g\n" +
-	"\fGetWorldInfo\x12*.atrinik.pathfinder.v1.GetWorldInfoRequest\x1a+.atrinik.pathfinder.v1.GetWorldInfoResponseBIZGgithub.com/atrinik/pathfinder/gen/go/atrinik/pathfinder/v1;pathfinderv1b\x06proto3"
+	"\fGetWorldInfo\x12*.atrinik.pathfinder.v1.GetWorldInfoRequest\x1a+.atrinik.pathfinder.v1.GetWorldInfoResponse\x12O\n" +
+	"\x04Plan\x12\".atrinik.pathfinder.v1.PlanRequest\x1a#.atrinik.pathfinder.v1.PlanResponse\x12g\n" +
+	"\fGetAtlasInfo\x12*.atrinik.pathfinder.v1.GetAtlasInfoRequest\x1a+.atrinik.pathfinder.v1.GetAtlasInfoResponseBIZGgithub.com/atrinik/pathfinder/gen/go/atrinik/pathfinder/v1;pathfinderv1b\x06proto3"
 
 var (
 	file_atrinik_pathfinder_v1_pathfinder_proto_rawDescOnce sync.Once
@@ -1132,51 +1754,71 @@ func file_atrinik_pathfinder_v1_pathfinder_proto_rawDescGZIP() []byte {
 	return file_atrinik_pathfinder_v1_pathfinder_proto_rawDescData
 }
 
-var file_atrinik_pathfinder_v1_pathfinder_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_atrinik_pathfinder_v1_pathfinder_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
+var file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_atrinik_pathfinder_v1_pathfinder_proto_goTypes = []any{
 	(CornerPolicy)(0),            // 0: atrinik.pathfinder.v1.CornerPolicy
 	(PathStatus)(0),              // 1: atrinik.pathfinder.v1.PathStatus
 	(StepKind)(0),                // 2: atrinik.pathfinder.v1.StepKind
 	(TransitionKind)(0),          // 3: atrinik.pathfinder.v1.TransitionKind
-	(*Position)(nil),             // 4: atrinik.pathfinder.v1.Position
-	(*AgentProfile)(nil),         // 5: atrinik.pathfinder.v1.AgentProfile
-	(*FindPathRequest)(nil),      // 6: atrinik.pathfinder.v1.FindPathRequest
-	(*Step)(nil),                 // 7: atrinik.pathfinder.v1.Step
-	(*SearchMetrics)(nil),        // 8: atrinik.pathfinder.v1.SearchMetrics
-	(*FindPathResponse)(nil),     // 9: atrinik.pathfinder.v1.FindPathResponse
-	(*DescribeMapRequest)(nil),   // 10: atrinik.pathfinder.v1.DescribeMapRequest
-	(*Transition)(nil),           // 11: atrinik.pathfinder.v1.Transition
-	(*DescribeMapResponse)(nil),  // 12: atrinik.pathfinder.v1.DescribeMapResponse
-	(*GetWorldInfoRequest)(nil),  // 13: atrinik.pathfinder.v1.GetWorldInfoRequest
-	(*GetWorldInfoResponse)(nil), // 14: atrinik.pathfinder.v1.GetWorldInfoResponse
+	(WaypointKind)(0),            // 4: atrinik.pathfinder.v1.WaypointKind
+	(AtlasSource)(0),             // 5: atrinik.pathfinder.v1.AtlasSource
+	(*Position)(nil),             // 6: atrinik.pathfinder.v1.Position
+	(*AgentProfile)(nil),         // 7: atrinik.pathfinder.v1.AgentProfile
+	(*FindPathRequest)(nil),      // 8: atrinik.pathfinder.v1.FindPathRequest
+	(*Step)(nil),                 // 9: atrinik.pathfinder.v1.Step
+	(*SearchMetrics)(nil),        // 10: atrinik.pathfinder.v1.SearchMetrics
+	(*FindPathResponse)(nil),     // 11: atrinik.pathfinder.v1.FindPathResponse
+	(*DescribeMapRequest)(nil),   // 12: atrinik.pathfinder.v1.DescribeMapRequest
+	(*Transition)(nil),           // 13: atrinik.pathfinder.v1.Transition
+	(*DescribeMapResponse)(nil),  // 14: atrinik.pathfinder.v1.DescribeMapResponse
+	(*GetWorldInfoRequest)(nil),  // 15: atrinik.pathfinder.v1.GetWorldInfoRequest
+	(*GetWorldInfoResponse)(nil), // 16: atrinik.pathfinder.v1.GetWorldInfoResponse
+	(*PlanRequest)(nil),          // 17: atrinik.pathfinder.v1.PlanRequest
+	(*Waypoint)(nil),             // 18: atrinik.pathfinder.v1.Waypoint
+	(*PlanMetrics)(nil),          // 19: atrinik.pathfinder.v1.PlanMetrics
+	(*PlanResponse)(nil),         // 20: atrinik.pathfinder.v1.PlanResponse
+	(*GetAtlasInfoRequest)(nil),  // 21: atrinik.pathfinder.v1.GetAtlasInfoRequest
+	(*GetAtlasInfoResponse)(nil), // 22: atrinik.pathfinder.v1.GetAtlasInfoResponse
 }
 var file_atrinik_pathfinder_v1_pathfinder_proto_depIdxs = []int32{
 	0,  // 0: atrinik.pathfinder.v1.AgentProfile.corners:type_name -> atrinik.pathfinder.v1.CornerPolicy
-	4,  // 1: atrinik.pathfinder.v1.FindPathRequest.start:type_name -> atrinik.pathfinder.v1.Position
-	4,  // 2: atrinik.pathfinder.v1.FindPathRequest.goal_tile:type_name -> atrinik.pathfinder.v1.Position
-	5,  // 3: atrinik.pathfinder.v1.FindPathRequest.agent:type_name -> atrinik.pathfinder.v1.AgentProfile
-	4,  // 4: atrinik.pathfinder.v1.FindPathRequest.blocked:type_name -> atrinik.pathfinder.v1.Position
-	4,  // 5: atrinik.pathfinder.v1.Step.position:type_name -> atrinik.pathfinder.v1.Position
+	6,  // 1: atrinik.pathfinder.v1.FindPathRequest.start:type_name -> atrinik.pathfinder.v1.Position
+	6,  // 2: atrinik.pathfinder.v1.FindPathRequest.goal_tile:type_name -> atrinik.pathfinder.v1.Position
+	7,  // 3: atrinik.pathfinder.v1.FindPathRequest.agent:type_name -> atrinik.pathfinder.v1.AgentProfile
+	6,  // 4: atrinik.pathfinder.v1.FindPathRequest.blocked:type_name -> atrinik.pathfinder.v1.Position
+	6,  // 5: atrinik.pathfinder.v1.Step.position:type_name -> atrinik.pathfinder.v1.Position
 	2,  // 6: atrinik.pathfinder.v1.Step.kind:type_name -> atrinik.pathfinder.v1.StepKind
 	1,  // 7: atrinik.pathfinder.v1.FindPathResponse.status:type_name -> atrinik.pathfinder.v1.PathStatus
-	7,  // 8: atrinik.pathfinder.v1.FindPathResponse.steps:type_name -> atrinik.pathfinder.v1.Step
-	8,  // 9: atrinik.pathfinder.v1.FindPathResponse.metrics:type_name -> atrinik.pathfinder.v1.SearchMetrics
+	9,  // 8: atrinik.pathfinder.v1.FindPathResponse.steps:type_name -> atrinik.pathfinder.v1.Step
+	10, // 9: atrinik.pathfinder.v1.FindPathResponse.metrics:type_name -> atrinik.pathfinder.v1.SearchMetrics
 	3,  // 10: atrinik.pathfinder.v1.Transition.kind:type_name -> atrinik.pathfinder.v1.TransitionKind
-	4,  // 11: atrinik.pathfinder.v1.Transition.from:type_name -> atrinik.pathfinder.v1.Position
-	4,  // 12: atrinik.pathfinder.v1.Transition.to:type_name -> atrinik.pathfinder.v1.Position
-	11, // 13: atrinik.pathfinder.v1.DescribeMapResponse.transitions:type_name -> atrinik.pathfinder.v1.Transition
-	6,  // 14: atrinik.pathfinder.v1.PathfinderService.FindPath:input_type -> atrinik.pathfinder.v1.FindPathRequest
-	10, // 15: atrinik.pathfinder.v1.PathfinderService.DescribeMap:input_type -> atrinik.pathfinder.v1.DescribeMapRequest
-	13, // 16: atrinik.pathfinder.v1.PathfinderService.GetWorldInfo:input_type -> atrinik.pathfinder.v1.GetWorldInfoRequest
-	9,  // 17: atrinik.pathfinder.v1.PathfinderService.FindPath:output_type -> atrinik.pathfinder.v1.FindPathResponse
-	12, // 18: atrinik.pathfinder.v1.PathfinderService.DescribeMap:output_type -> atrinik.pathfinder.v1.DescribeMapResponse
-	14, // 19: atrinik.pathfinder.v1.PathfinderService.GetWorldInfo:output_type -> atrinik.pathfinder.v1.GetWorldInfoResponse
-	17, // [17:20] is the sub-list for method output_type
-	14, // [14:17] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	6,  // 11: atrinik.pathfinder.v1.Transition.from:type_name -> atrinik.pathfinder.v1.Position
+	6,  // 12: atrinik.pathfinder.v1.Transition.to:type_name -> atrinik.pathfinder.v1.Position
+	13, // 13: atrinik.pathfinder.v1.DescribeMapResponse.transitions:type_name -> atrinik.pathfinder.v1.Transition
+	6,  // 14: atrinik.pathfinder.v1.PlanRequest.start:type_name -> atrinik.pathfinder.v1.Position
+	6,  // 15: atrinik.pathfinder.v1.PlanRequest.goal_tile:type_name -> atrinik.pathfinder.v1.Position
+	6,  // 16: atrinik.pathfinder.v1.Waypoint.position:type_name -> atrinik.pathfinder.v1.Position
+	4,  // 17: atrinik.pathfinder.v1.Waypoint.kind:type_name -> atrinik.pathfinder.v1.WaypointKind
+	1,  // 18: atrinik.pathfinder.v1.PlanResponse.status:type_name -> atrinik.pathfinder.v1.PathStatus
+	18, // 19: atrinik.pathfinder.v1.PlanResponse.waypoints:type_name -> atrinik.pathfinder.v1.Waypoint
+	19, // 20: atrinik.pathfinder.v1.PlanResponse.metrics:type_name -> atrinik.pathfinder.v1.PlanMetrics
+	5,  // 21: atrinik.pathfinder.v1.GetAtlasInfoResponse.source:type_name -> atrinik.pathfinder.v1.AtlasSource
+	8,  // 22: atrinik.pathfinder.v1.PathfinderService.FindPath:input_type -> atrinik.pathfinder.v1.FindPathRequest
+	12, // 23: atrinik.pathfinder.v1.PathfinderService.DescribeMap:input_type -> atrinik.pathfinder.v1.DescribeMapRequest
+	15, // 24: atrinik.pathfinder.v1.PathfinderService.GetWorldInfo:input_type -> atrinik.pathfinder.v1.GetWorldInfoRequest
+	17, // 25: atrinik.pathfinder.v1.PathfinderService.Plan:input_type -> atrinik.pathfinder.v1.PlanRequest
+	21, // 26: atrinik.pathfinder.v1.PathfinderService.GetAtlasInfo:input_type -> atrinik.pathfinder.v1.GetAtlasInfoRequest
+	11, // 27: atrinik.pathfinder.v1.PathfinderService.FindPath:output_type -> atrinik.pathfinder.v1.FindPathResponse
+	14, // 28: atrinik.pathfinder.v1.PathfinderService.DescribeMap:output_type -> atrinik.pathfinder.v1.DescribeMapResponse
+	16, // 29: atrinik.pathfinder.v1.PathfinderService.GetWorldInfo:output_type -> atrinik.pathfinder.v1.GetWorldInfoResponse
+	20, // 30: atrinik.pathfinder.v1.PathfinderService.Plan:output_type -> atrinik.pathfinder.v1.PlanResponse
+	22, // 31: atrinik.pathfinder.v1.PathfinderService.GetAtlasInfo:output_type -> atrinik.pathfinder.v1.GetAtlasInfoResponse
+	27, // [27:32] is the sub-list for method output_type
+	22, // [22:27] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_atrinik_pathfinder_v1_pathfinder_proto_init() }
@@ -1188,13 +1830,17 @@ func file_atrinik_pathfinder_v1_pathfinder_proto_init() {
 		(*FindPathRequest_GoalTile)(nil),
 		(*FindPathRequest_GoalMap)(nil),
 	}
+	file_atrinik_pathfinder_v1_pathfinder_proto_msgTypes[11].OneofWrappers = []any{
+		(*PlanRequest_GoalTile)(nil),
+		(*PlanRequest_GoalMap)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_atrinik_pathfinder_v1_pathfinder_proto_rawDesc), len(file_atrinik_pathfinder_v1_pathfinder_proto_rawDesc)),
-			NumEnums:      4,
-			NumMessages:   11,
+			NumEnums:      6,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

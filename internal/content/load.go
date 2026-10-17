@@ -15,6 +15,24 @@ import (
 	"github.com/atrinik/pathfinder/internal/world"
 )
 
+// RoadDirectories are the archetype directories whose floors are roads:
+// flagstone paving, wooden bridges and snow paths. Long journeys prefer
+// them, as a car navigation system prefers highways.
+var RoadDirectories = []string{"floors/flagstone/", "floors/bridge_wood/", "floors/snow/snow_path/"}
+
+// IsRoad reports whether an archetype is a road floor.
+func IsRoad(a *Archetype) bool {
+	if a == nil {
+		return false
+	}
+	for _, dir := range RoadDirectories {
+		if strings.HasPrefix(a.Source, dir) {
+			return true
+		}
+	}
+	return false
+}
+
 // Authored object types the movement model distinguishes.
 const (
 	typeDoor       = "20"
@@ -71,10 +89,11 @@ func loadArchetypes(dir string) (map[string]*Archetype, []sourceFile, error) {
 		if err != nil {
 			return fmt.Errorf("%s: %w", p, err)
 		}
+		rel, _ := filepath.Rel(dir, p)
 		for _, a := range parsed {
+			a.Source = filepath.ToSlash(rel)
 			archetypes[a.Name] = a
 		}
-		rel, _ := filepath.Rel(dir, p)
 		files = append(files, sourceFile{"arch/" + filepath.ToSlash(rel), p})
 		return nil
 	})
@@ -219,8 +238,9 @@ func Compile(archetypes map[string]*Archetype, files map[string]*MapFile, digest
 			Path: p, Name: h["name"], Region: h["region"],
 			Width: width, Height: height,
 			EnterX: int32(h.Int("enter_x", 0)), EnterY: int32(h.Int("enter_y", 0)),
-			Terrain: make([]uint32, tiles), Blocked: make([]bool, tiles),
-			Locks: map[int32]string{}, Exits: map[int32][]world.Exit{},
+			Terrain: make([]uint32, tiles), Blocked: make([]bool, tiles), Road: make([]bool, tiles),
+			AutoExit: make([]bool, tiles),
+			Locks:    map[int32]string{}, Exits: map[int32][]world.Exit{},
 			Seams: [8]int32{-1, -1, -1, -1, -1, -1, -1, -1},
 		})
 	}
@@ -297,6 +317,9 @@ func placeObject(w *world.World, m *world.Map, header Attrs, o *Object, a *Arche
 	tile := m.Tile(x, y)
 	objType, _ := attr(o, a, "type")
 	m.Terrain[tile] |= uint32(attrInt(o, a, "terrain_type", 0))
+	if IsRoad(a) {
+		m.Road[tile] = true
+	}
 	if blocks(o, a, objType) {
 		m.Blocked[tile] = true
 	}
@@ -308,6 +331,9 @@ func placeObject(w *world.World, m *world.Map, header Attrs, o *Object, a *Arche
 				continue
 			}
 			partTile := m.Tile(px, py)
+			if IsRoad(a) {
+				m.Road[partTile] = true
+			}
 			partType := part.Attrs["type"]
 			if part.Attrs["no_pass"] == "1" && !passableType(partType) {
 				m.Blocked[partTile] = true
@@ -373,6 +399,7 @@ func addExit(w *world.World, m *world.Map, header Attrs, o *Object, a *Archetype
 		m.Exits[tile] = append(m.Exits[tile], world.Exit{
 			To: n.Index, X: ax, Y: ay, Automatic: automatic, Label: label,
 		})
+		m.AutoExit[tile] = m.AutoExit[tile] || automatic
 		return nil
 	}
 	// Destination-less stairs lead to the same square one level up or down.
@@ -384,6 +411,7 @@ func addExit(w *world.World, m *world.Map, header Attrs, o *Object, a *Archetype
 		m.Exits[tile] = append(m.Exits[tile], world.Exit{
 			To: n.Index, X: x, Y: y, Automatic: automatic, Label: label,
 		})
+		m.AutoExit[tile] = m.AutoExit[tile] || automatic
 	}
 	return nil
 }

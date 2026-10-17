@@ -1,0 +1,70 @@
+// The offline atlas file: the connector graph pathfinderd plans over,
+// built once from a content checkout by the atlas command.
+syntax = "proto3";
+
+package atrinik.pathfinder.atlas.v1;
+
+option go_package = "github.com/atrinik/pathfinder/gen/go/atrinik/pathfinder/atlas/v1;atlasv1";
+
+// Atlas is one serialized atlas. A reader must refuse a file whose format,
+// content digest or map list differs from the content it serves.
+message Atlas {
+  // The file format version; this is version 1.
+  uint32 format = 1;
+  // SHA-256 over the content's map and archetype files, in path order.
+  string content_digest = 2;
+  // Every loaded map path, in load (index) order.
+  repeated string maps = 3;
+  repeated Connector connectors = 4;
+  // SHA-256 over the connector graph in the canonical byte encoding the
+  // reader recomputes (every connector's map, x, y and kinds, then each
+  // edge's target, cost, kind, automatic flag and label), so a damaged file
+  // is refused even where its values remain plausible.
+  bytes graph_digest = 5;
+}
+
+// ConnectorKind flags; one connector may carry several.
+enum ConnectorKind {
+  CONNECTOR_KIND_UNSPECIFIED = 0;
+  // An exit applied while standing on the tile.
+  CONNECTOR_KIND_APPLIED_EXIT = 1;
+  // An exit triggered by stepping onto the tile.
+  CONNECTOR_KIND_AUTOMATIC_EXIT = 2;
+  // Where an exit lands.
+  CONNECTOR_KIND_ARRIVAL = 4;
+  // A border tile a seam is crossed from or onto.
+  CONNECTOR_KIND_CROSSING = 8;
+}
+
+// EdgeKind is how an edge moves.
+enum EdgeKind {
+  EDGE_KIND_UNSPECIFIED = 0;
+  // A walk within one map component.
+  EDGE_KIND_WALK = 1;
+  // An exit.
+  EDGE_KIND_EXIT = 2;
+  // A seam crossing.
+  EDGE_KIND_SEAM = 3;
+}
+
+// Connector is one atlas node and its outgoing edges.
+message Connector {
+  // Index into Atlas.maps.
+  uint32 map = 1;
+  int32 x = 2;
+  int32 y = 3;
+  // A bitwise OR of ConnectorKind values.
+  uint32 kinds = 4;
+  repeated Edge edges = 5;
+}
+
+// Edge is one directed edge.
+message Edge {
+  // Index into Atlas.connectors.
+  uint32 to = 1;
+  // Road-weighted cost in thirds of a move.
+  uint32 cost = 2;
+  EdgeKind kind = 3;
+  bool automatic = 4;
+  string label = 5;
+}

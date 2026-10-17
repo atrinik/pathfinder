@@ -50,6 +50,9 @@ type Archetype struct {
 	Name  string
 	Attrs Attrs
 	Parts []Part
+	// Source is the archetype file's path below arch/, such as
+	// "floors/flagstone/flagstone.arc".
+	Source string
 }
 
 // MapFile is one parsed map.

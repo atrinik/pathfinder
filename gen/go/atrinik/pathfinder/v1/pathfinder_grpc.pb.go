@@ -28,6 +28,8 @@ const (
 	PathfinderService_FindPath_FullMethodName     = "/atrinik.pathfinder.v1.PathfinderService/FindPath"
 	PathfinderService_DescribeMap_FullMethodName  = "/atrinik.pathfinder.v1.PathfinderService/DescribeMap"
 	PathfinderService_GetWorldInfo_FullMethodName = "/atrinik.pathfinder.v1.PathfinderService/GetWorldInfo"
+	PathfinderService_Plan_FullMethodName         = "/atrinik.pathfinder.v1.PathfinderService/Plan"
+	PathfinderService_GetAtlasInfo_FullMethodName = "/atrinik.pathfinder.v1.PathfinderService/GetAtlasInfo"
 )
 
 // PathfinderServiceClient is the client API for PathfinderService service.
@@ -43,6 +45,13 @@ type PathfinderServiceClient interface {
 	DescribeMap(ctx context.Context, in *DescribeMapRequest, opts ...grpc.CallOption) (*DescribeMapResponse, error)
 	// GetWorldInfo summarizes the loaded content.
 	GetWorldInfo(ctx context.Context, in *GetWorldInfoRequest, opts ...grpc.CallOption) (*GetWorldInfoResponse, error)
+	// Plan returns a road-preferring route as sparse waypoints for a plain
+	// walker (walking terrain, no keys, strict corners), searched over the
+	// atlas of connectors instead of every tile. Walk between consecutive
+	// waypoints (click-to-move) and use the exits and seams they name.
+	Plan(ctx context.Context, in *PlanRequest, opts ...grpc.CallOption) (*PlanResponse, error)
+	// GetAtlasInfo summarizes the atlas Plan searches.
+	GetAtlasInfo(ctx context.Context, in *GetAtlasInfoRequest, opts ...grpc.CallOption) (*GetAtlasInfoResponse, error)
 }
 
 type pathfinderServiceClient struct {
@@ -83,6 +92,26 @@ func (c *pathfinderServiceClient) GetWorldInfo(ctx context.Context, in *GetWorld
 	return out, nil
 }
 
+func (c *pathfinderServiceClient) Plan(ctx context.Context, in *PlanRequest, opts ...grpc.CallOption) (*PlanResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PlanResponse)
+	err := c.cc.Invoke(ctx, PathfinderService_Plan_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *pathfinderServiceClient) GetAtlasInfo(ctx context.Context, in *GetAtlasInfoRequest, opts ...grpc.CallOption) (*GetAtlasInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetAtlasInfoResponse)
+	err := c.cc.Invoke(ctx, PathfinderService_GetAtlasInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PathfinderServiceServer is the server API for PathfinderService service.
 // All implementations must embed UnimplementedPathfinderServiceServer
 // for forward compatibility.
@@ -96,6 +125,13 @@ type PathfinderServiceServer interface {
 	DescribeMap(context.Context, *DescribeMapRequest) (*DescribeMapResponse, error)
 	// GetWorldInfo summarizes the loaded content.
 	GetWorldInfo(context.Context, *GetWorldInfoRequest) (*GetWorldInfoResponse, error)
+	// Plan returns a road-preferring route as sparse waypoints for a plain
+	// walker (walking terrain, no keys, strict corners), searched over the
+	// atlas of connectors instead of every tile. Walk between consecutive
+	// waypoints (click-to-move) and use the exits and seams they name.
+	Plan(context.Context, *PlanRequest) (*PlanResponse, error)
+	// GetAtlasInfo summarizes the atlas Plan searches.
+	GetAtlasInfo(context.Context, *GetAtlasInfoRequest) (*GetAtlasInfoResponse, error)
 	mustEmbedUnimplementedPathfinderServiceServer()
 }
 
@@ -114,6 +150,12 @@ func (UnimplementedPathfinderServiceServer) DescribeMap(context.Context, *Descri
 }
 func (UnimplementedPathfinderServiceServer) GetWorldInfo(context.Context, *GetWorldInfoRequest) (*GetWorldInfoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetWorldInfo not implemented")
+}
+func (UnimplementedPathfinderServiceServer) Plan(context.Context, *PlanRequest) (*PlanResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Plan not implemented")
+}
+func (UnimplementedPathfinderServiceServer) GetAtlasInfo(context.Context, *GetAtlasInfoRequest) (*GetAtlasInfoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAtlasInfo not implemented")
 }
 func (UnimplementedPathfinderServiceServer) mustEmbedUnimplementedPathfinderServiceServer() {}
 func (UnimplementedPathfinderServiceServer) testEmbeddedByValue()                           {}
@@ -190,6 +232,42 @@ func _PathfinderService_GetWorldInfo_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PathfinderService_Plan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PlanRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PathfinderServiceServer).Plan(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PathfinderService_Plan_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PathfinderServiceServer).Plan(ctx, req.(*PlanRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PathfinderService_GetAtlasInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAtlasInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PathfinderServiceServer).GetAtlasInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PathfinderService_GetAtlasInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PathfinderServiceServer).GetAtlasInfo(ctx, req.(*GetAtlasInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PathfinderService_ServiceDesc is the grpc.ServiceDesc for PathfinderService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -208,6 +286,14 @@ var PathfinderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetWorldInfo",
 			Handler:    _PathfinderService_GetWorldInfo_Handler,
+		},
+		{
+			MethodName: "Plan",
+			Handler:    _PathfinderService_Plan_Handler,
+		},
+		{
+			MethodName: "GetAtlasInfo",
+			Handler:    _PathfinderService_GetAtlasInfo_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

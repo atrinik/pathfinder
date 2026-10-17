@@ -7,6 +7,7 @@
 //	~  water
 //	D  floor and door
 //	L  floor and a door locked by "silver_key"
+//	=  road (flagstone)
 //	(space) void
 //
 // Exits and other objects are added explicitly with Object.
@@ -89,7 +90,17 @@ var glyphs = map[rune][]string{
 	'~': {"water"},
 	'D': {"floor", "door"},
 	'L': {"floor", "locked_door"},
+	'=': {"flagstone"},
 }
+
+// RoadArchetypes is the fixture's road archetype file, placed under
+// arch/floors/flagstone/ so the reader classifies it as a road.
+const RoadArchetypes = `Object flagstone
+name flagstone
+type 71
+terrain_type 1
+end
+`
 
 // Content is a fixture checkout under construction.
 type Content struct {
@@ -114,6 +125,13 @@ func New(t testing.TB) *Content {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "arch", "fixture.arc"), []byte(Archetypes), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	roads := filepath.Join(root, "arch", "floors", "flagstone")
+	if err := os.MkdirAll(roads, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(roads, "flagstone.arc"), []byte(RoadArchetypes), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return &Content{t: t, Root: root, maps: map[string]*Map{}}

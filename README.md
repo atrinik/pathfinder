@@ -8,16 +8,15 @@ the network keeps its MIT code separate from GPL clients that consult it.
 
 The service is being built in stages:
 
-1. **Precise pathfinding** (this release): exact tile-by-tile paths for one
-   agent, across tiled-map seams, exits and stairs, honouring terrain,
-   static blockers, locked doors, diagonal-corner rules and temporary
-   obstacles.
-2. **Offline atlas and road planner** (next): a precomputed, versioned world
-   graph of connectors (exits, seams, chokepoints) and roads, searched like a
-   car navigation system that prefers highways for most of a long journey and
-   returns waypoints instead of every tile.
-3. **Group movement**: flow fields shared by many monsters or NPCs heading for
-   one goal.
+1. **Precise pathfinding**: exact tile-by-tile paths for one agent, across
+   tiled-map seams, exits and stairs, honouring terrain, static blockers,
+   locked doors, diagonal-corner rules and temporary obstacles.
+2. **Offline atlas and road planner**: a precomputed, versioned world graph
+   of connectors (exits, arrivals and seam crossings) joined by road-weighted
+   walks, searched like a car navigation system that prefers highways for
+   most of a long journey, and returning waypoints instead of every tile.
+3. **Group movement** (next): flow fields shared by many monsters or NPCs
+   heading for one goal.
 
 ## API
 
@@ -38,6 +37,26 @@ protocol.
   default), the keys it carries, the diagonal corner policy (`STRICT` by
   default: both orthogonal neighbours must be passable), whether it must stay
   on its map (monsters and NPCs), and maps to avoid.
+- `Plan(start, goal_tile | goal_map, avoided_maps, spacing)` returns a
+  route as sparse waypoints for a plain walker (walking terrain, no keys,
+  strict corners): `START`, then `WALK` points to click-to-move between,
+  `EXIT` tiles to apply (or step onto, when `automatic`), `SEAM` border tiles
+  to step across, `ARRIVE` where those land, and `GOAL`. Consecutive
+  waypoints on one map are at most `spacing` tiles apart (7 by default), and
+  walking straight between them stays within a tile of the planned route
+  (half a tile on roads, whose entry and exit points are always kept), and
+  every segment between two waypoints can be walked in a straight line. A
+  plan that starts on an automatic exit begins by taking it, and one that
+  starts on an exit inside a wall can still use it. `max_expanded` bounds a
+  plan's work, counting each connector expanded, edge examined, tile
+  searched and waypoint returned (capped by the server's `-max-expanded`); hitting it returns
+  `LIMIT_REACHED`.
+  Roads cost two thirds of a plain step, so the route follows them where the
+  detour pays; `cost` is in thirds of a move and `tiles` counts the moves.
+  Agents with other abilities (keys, swimming, staying on one map) use
+  `FindPath`.
+- `GetAtlasInfo` reports the atlas' connectors, edges, road tiles, content
+  digest and whether it was built at startup or loaded from a file.
 - `DescribeMap` lists a map's size, walkable tiles, seams and exits.
   `GetWorldInfo` reports the loaded maps, tiles, transitions and a SHA-256
   digest of the content files.
@@ -69,13 +88,55 @@ archetype's. The movement model compiles:
 
 A map without a positive `width` and `height` fails the load with its path.
 
+## Atlas
+
+The atlas (`internal/atlas`) is the planner's road network:
+
+- **roads** are tiles holding a floor archetype from `floors/flagstone/`,
+  `floors/bridge_wood/` or `floors/snow/snow_path/`;
+- **connectors** are the tiles where travel leaves or enters an area: exit
+  tiles, exit arrivals, and one crossing per run of border tiles that joins
+  the same two walkable components across a seam (diagonal crossings need
+  both corner tiles passable, and a crossing onto an automatic exit is its
+  own connector);
+- **edges** are exits and seam crossings (cost 3), and walks between every
+  pair of connectors in one walkable component of a map, priced by a
+  road-weighted Dijkstra search (2 per step between road tiles, 3 otherwise).
+
+A plan searches only the connector graph, starting from the connectors the
+start can walk to and finishing at the goal (or at any connector on the goal
+map), then re-derives the tile path of each walk it uses and simplifies it
+into waypoints (Ramer-Douglas-Peucker with a one-tile tolerance, split to the
+requested spacing). Without roads and seams it finds exactly the precise
+search's routes at the same cost; a seam is crossed at the middle of its run.
+
+`pathfinderd` builds the atlas at startup unless `-atlas` names a prebuilt
+file from the `atlas` command (format
+[`proto/atrinik/pathfinder/atlas/v1/atlas.proto`](proto/atrinik/pathfinder/atlas/v1/atlas.proto)).
+A file is stamped with the content digest and map list and is refused for any
+other content, and carries a SHA-256 digest of its connector graph that loading
+verifies. Loading also recomputes the connectors, exits and seams (they
+follow cheaply from the content) and requires the file to match them exactly;
+only the costly walks are read: exactly one from each connector to every
+other connector walkable from its component, so a damaged file is refused
+rather than silently losing or inventing routes.
+A plan also checks each walk it re-derives against its edge's cost and fails
+with `DATA_LOSS` on a mismatch. These checks detect damage, not forgery: an
+atlas file is trusted operator input, like the content checkout and the
+binary, since proving every stored walk cost exact would cost as much as
+building the atlas. Serve a file only from where the content comes from, or
+let the daemon build the atlas. Files are byte-for-byte reproducible. Like path searches, at most
+`-max-concurrent` plans run at once, each reusing its own scratch space, and
+a canceled request stops its plan.
+
 ## Build and run
 
 Go 1.26.9 (see `.go-version`) is the only build requirement.
 
 ```sh
-go build ./cmd/pathfinderd
-./pathfinderd -content ../content -listen 127.0.0.1:7843
+go build ./cmd/pathfinderd ./cmd/atlas
+./atlas -content ../content -out content.atlas      # optional
+./pathfinderd -content ../content -atlas content.atlas -listen 127.0.0.1:7843
 ```
 
 The server listens on loopback by default. Each search uses scratch space
@@ -91,12 +152,18 @@ canceled or expired request stops its search.
 sh tools/install-ci-dependencies.sh   # pinned buf, protoc plugins, linters
 sh tools/generate.sh                   # after editing proto/
 sh tools/validate.sh                   # everything CI checks
-PATHFINDER_CONTENT=../content go test ./internal/search -run RealContent -v
+PATHFINDER_CONTENT=../content go test ./internal/search ./internal/atlas -run RealContent -v
 ```
 
 On the current content (3,660 maps, 2.08 million tiles), loading takes about
 a second; the 149-step walk from the Asteria inn to the Strakewood Island
-farm takes about 6 ms.
+farm takes about 6 ms. The atlas has 8,915 connectors, 74,277 edges and
+35,960 road tiles. Building it takes 35 ms on 32 cores and 250 ms on one;
+loading its 900 KB file takes 29 ms and 50 ms. Planning the inn-to-farm trip
+takes about 0.6 ms (72 waypoints over 163 tiles), and the 447-step walk from
+Strakewood town to the farm about 1.8 ms instead of 28 ms for the precise
+search, with 14 allocations from a reused planner slot; roads lengthen these
+walks by 5 to 10 %.
 
 Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Provenance is recorded
 in [PROVENANCE.md](PROVENANCE.md) and dependencies in

@@ -18,6 +18,13 @@ service PathfinderService {
   rpc DescribeMap(DescribeMapRequest) returns (DescribeMapResponse);
   // GetWorldInfo summarizes the loaded content.
   rpc GetWorldInfo(GetWorldInfoRequest) returns (GetWorldInfoResponse);
+  // Plan returns a road-preferring route as sparse waypoints for a plain
+  // walker (walking terrain, no keys, strict corners), searched over the
+  // atlas of connectors instead of every tile. Walk between consecutive
+  // waypoints (click-to-move) and use the exits and seams they name.
+  rpc Plan(PlanRequest) returns (PlanResponse);
+  // GetAtlasInfo summarizes the atlas Plan searches.
+  rpc GetAtlasInfo(GetAtlasInfoRequest) returns (GetAtlasInfoResponse);
 }
 
 // Position is one tile on one map.
@@ -167,4 +174,97 @@ message GetWorldInfoResponse {
   uint32 transitions = 3;
   // SHA-256 over the loaded map and archetype files, in path order.
   string content_digest = 4;
+}
+
+// PlanRequest asks for a waypoint route from start to a goal.
+message PlanRequest {
+  Position start = 1;
+  oneof goal {
+    // Reach exactly this tile.
+    Position goal_tile = 2;
+    // Reach any tile of this map.
+    string goal_map = 3;
+  }
+  // Maps the route must not enter (the start and goal maps are exempt).
+  repeated string avoided_maps = 4;
+  // Greatest distance, in tiles (Chebyshev), between consecutive waypoints
+  // on one map. Zero selects 7, within the client's click-to-move reach.
+  uint32 spacing = 5;
+  // Bound on the plan's work: each atlas connector expanded or looked at,
+  // edge examined, tile searched and waypoint returned counts one. Zero
+  // selects the server default, and larger values are capped by it.
+  uint32 max_expanded = 6;
+}
+
+// WaypointKind is what to do at a waypoint.
+enum WaypointKind {
+  WAYPOINT_KIND_UNSPECIFIED = 0;
+  // Where the route begins.
+  WAYPOINT_KIND_START = 1;
+  // An intermediate point to walk to.
+  WAYPOINT_KIND_WALK = 2;
+  // An exit tile: walk onto it, then apply the exit (or, when automatic,
+  // stepping onto it is enough).
+  WAYPOINT_KIND_EXIT = 3;
+  // A border tile: walk onto it, then step across into the neighbouring map
+  // towards the next waypoint.
+  WAYPOINT_KIND_SEAM = 4;
+  // Where an exit or seam crossing lands.
+  WAYPOINT_KIND_ARRIVE = 5;
+  // The destination.
+  WAYPOINT_KIND_GOAL = 6;
+}
+
+// Waypoint is one point of a planned route.
+message Waypoint {
+  Position position = 1;
+  WaypointKind kind = 2;
+  // For WAYPOINT_KIND_EXIT: true when stepping onto the exit triggers it.
+  bool automatic = 3;
+  // For WAYPOINT_KIND_EXIT: the exit's authored name, such as "stairs".
+  string label = 4;
+}
+
+// PlanMetrics describes the work one plan did.
+message PlanMetrics {
+  // Atlas connectors expanded.
+  uint64 expanded = 1;
+  uint64 duration_micros = 2;
+}
+
+// PlanResponse carries the waypoints, start first, when a route was found.
+message PlanResponse {
+  // PATH_STATUS_FOUND, PATH_STATUS_NO_PATH or PATH_STATUS_LIMIT_REACHED.
+  PathStatus status = 1;
+  repeated Waypoint waypoints = 2;
+  // Road-weighted cost in thirds of a move: a step along a road costs 2,
+  // any other step or an exit or seam crossing 3.
+  uint32 cost = 3;
+  // Tile moves along the route, exits and seam crossings included.
+  uint32 tiles = 4;
+  PlanMetrics metrics = 5;
+}
+
+// GetAtlasInfoRequest has no fields.
+message GetAtlasInfoRequest {}
+
+// AtlasSource is where the served atlas came from.
+enum AtlasSource {
+  ATLAS_SOURCE_UNSPECIFIED = 0;
+  // Built from the loaded content at startup.
+  ATLAS_SOURCE_BUILT = 1;
+  // Loaded from a prebuilt atlas file matching the loaded content.
+  ATLAS_SOURCE_FILE = 2;
+}
+
+// GetAtlasInfoResponse summarizes the atlas.
+message GetAtlasInfoResponse {
+  uint32 connectors = 1;
+  uint32 edges = 2;
+  uint32 road_tiles = 3;
+  // The content digest the atlas was built from (that of GetWorldInfo).
+  string content_digest = 4;
+  AtlasSource source = 5;
+  // How long building or loading the atlas took.
+  uint64 duration_micros = 6;
 }
