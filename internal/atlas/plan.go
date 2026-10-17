@@ -56,8 +56,9 @@ type Request struct {
 	GoalMap  *world.Map
 	Avoided  map[int32]bool // map indexes to stay off (start and goal maps exempt)
 	Spacing  int32          // greatest waypoint distance on one map; 0 selects DefaultSpacing
-	// MaxExpanded bounds one plan's work: each connector expanded, tile
-	// searched and waypoint emitted spends one. Zero means no bound.
+	// MaxExpanded bounds one plan's work: each connector expanded or looked
+	// at, edge examined, tile searched and waypoint emitted spends one. Zero
+	// means no bound.
 	MaxExpanded int
 }
 
@@ -332,6 +333,12 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 		if n.cost >= best {
 			break
 		}
+		// A connector that is itself the goal ends the search here, before
+		// it is charged or expanded: nothing can arrive cheaper.
+		if extra, ok := goalCost(n.tile); ok && extra == 0 {
+			best, finish, p.finishSeam = n.cost, n.tile, -1
+			continue
+		}
 		if p.work--; p.work < 0 {
 			return Plan{Expanded: expanded}, errLimit
 		}
@@ -346,7 +353,17 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 		if extra, ok := goalCost(n.tile); ok && int64(n.cost)+int64(extra) < int64(best) {
 			best, finish, p.finishSeam = n.cost+extra, n.tile, -1
 		}
-		for _, e := range a.Out[n.tile] {
+		for k, e := range a.Out[n.tile] {
+			// Each edge examined spends work too: a connector may have as many
+			// walks as its component has connectors.
+			if p.work--; p.work < 0 {
+				return Plan{Expanded: expanded}, errLimit
+			}
+			if k%cancelCheckInterval == cancelCheckInterval-1 {
+				if err := ctx.Err(); err != nil {
+					return Plan{}, err
+				}
+			}
 			to := a.Connectors[e.To]
 			if p.avoided(to.Map) {
 				continue
@@ -440,9 +457,10 @@ func (p *planner) seedSeamStarts(ctx context.Context, side *gridSearch, goalTile
 }
 
 // exitOntoGoal answers a start whose own exit lands on the goal map or
-// goal tile: any route there needs at least one transition, so taking it is
-// already best and nothing needs searching. A start on an automatic exit is
-// carried by it; otherwise the start's applied exits are usable from it.
+// goal tile: any route to another map needs at least one transition, and a
+// start on an automatic exit is carried by it wherever it leads, so taking
+// it is already best and nothing needs searching. Otherwise the start's
+// applied exits are usable from it.
 func (p *planner) exitOntoGoal(startTile int32, started time.Time) (Plan, bool) {
 	r := p.r
 	sm := r.Start.Map
@@ -451,7 +469,10 @@ func (p *planner) exitOntoGoal(startTile int32, started time.Time) (Plan, bool) 
 			continue
 		}
 		dest := p.a.World.Maps[exit.To]
-		if dest == sm || !dest.InBounds(exit.X, exit.Y) || !standable(dest, dest.Tile(exit.X, exit.Y)) {
+		// Within one map an optional exit can be beaten by walking; a forced
+		// one is the only way on.
+		if (dest == sm && !exit.Automatic) || !dest.InBounds(exit.X, exit.Y) ||
+			!standable(dest, dest.Tile(exit.X, exit.Y)) {
 			continue
 		}
 		switch {

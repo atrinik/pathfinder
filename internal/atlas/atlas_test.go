@@ -498,6 +498,56 @@ func TestDiagonalExitCrossingsServeEveryComponent(t *testing.T) {
 	}
 }
 
+func TestForcedSameMapExitsOntoTheGoalSearchNothing(t *testing.T) {
+	rows := []string{}
+	for range 30 {
+		rows = append(rows, strings.Repeat(".", 30))
+	}
+	c := fixture.New(t)
+	c.Map("/t/plaza", rows...).Object("teleporter", 0, 0, "slaying /t/plaza", "hp 29", "sp 29")
+	a, w := build(t, c)
+	goal := at(t, w, "/t/plaza", 29, 29)
+	p := plan(t, a, atlas.Request{Start: at(t, w, "/t/plaza", 0, 0), GoalTile: &goal, MaxExpanded: 10})
+	if !p.Found || kinds(p) != "start exit goal" || p.Work > 10 {
+		t.Fatalf("work %d limit %v: %s", p.Work, p.LimitReached, describe(p))
+	}
+}
+
+func TestConnectorGoalsAreNotExpanded(t *testing.T) {
+	// A forced chain of two teleporters into the goal map: two connectors
+	// expanded, two edges examined and four waypoints; the arrival on the
+	// goal map is recognized without being expanded.
+	c := fixture.New(t)
+	c.Map("/t/a", ".").Object("teleporter", 0, 0, "slaying /t/b", "hp 0", "sp 0")
+	c.Map("/t/b", ".").Object("teleporter", 0, 0, "slaying /t/c", "hp 0", "sp 0")
+	c.Map("/t/c", "..")
+	a, w := build(t, c)
+	goal, _ := w.Lookup("/t/c")
+	p := plan(t, a, atlas.Request{Start: at(t, w, "/t/a", 0, 0), GoalMap: goal})
+	if !p.Found || p.Expanded != 2 || len(p.Waypoints) != 4 || p.Work != 2+2+4 {
+		t.Fatalf("expanded %d, %d waypoints, work %d: %s", p.Expanded, len(p.Waypoints), p.Work, describe(p))
+	}
+}
+
+func TestEdgeScansSpendWork(t *testing.T) {
+	// One open row of portals: every connector has a walk to every other.
+	row := strings.Repeat(".", 41)
+	c := fixture.New(t)
+	m := c.Map("/t/hall", row)
+	for x := 1; x < 40; x++ {
+		m.Object("portal", x, 0, "slaying /t/dead", "hp 0", "sp 0")
+	}
+	m.Object("portal", 40, 0, "slaying /t/goal", "hp 0", "sp 0")
+	c.Map("/t/dead", ".")
+	c.Map("/t/goal", ".")
+	a, w := build(t, c)
+	goal, _ := w.Lookup("/t/goal")
+	p := plan(t, a, atlas.Request{Start: at(t, w, "/t/hall", 0, 0), GoalMap: goal})
+	if !p.Found || p.Work < p.Expanded*39 {
+		t.Fatalf("work %d for %d expansions of ~40 edges each", p.Work, p.Expanded)
+	}
+}
+
 func TestStartsInWallsUseSelfSeams(t *testing.T) {
 	// The east border leads back to the west one.
 	c := fixture.New(t)

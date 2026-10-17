@@ -48,8 +48,8 @@ protocol.
   every segment between two waypoints can be walked in a straight line. A
   plan that starts on an automatic exit begins by taking it, and one that
   starts on an exit inside a wall can still use it. `max_expanded` bounds a
-  plan's work, counting each connector expanded, tile searched and waypoint
-  returned (capped by the server's `-max-expanded`); hitting it returns
+  plan's work, counting each connector expanded, edge examined, tile
+  searched and waypoint returned (capped by the server's `-max-expanded`); hitting it returns
   `LIMIT_REACHED`.
   Roads cost two thirds of a plain step, so the route follows them where the
   detour pays; `cost` is in thirds of a move and `tiles` counts the moves.

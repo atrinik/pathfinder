@@ -208,7 +208,8 @@ func Decode(w *world.World, f *atlasv1.Atlas) (*Atlas, error) {
 
 // walkEdge checks one walk edge read from a file.
 func (a *Atlas) walkEdge(from int32, pe *atlasv1.Edge) (Edge, error) {
-	if int(pe.GetTo()) >= len(a.Connectors) || int32(pe.GetTo()) == from {
+	// Compare unsigned before narrowing: a huge id must not wrap negative.
+	if uint64(pe.GetTo()) >= uint64(len(a.Connectors)) || int32(pe.GetTo()) == from {
 		return Edge{}, fmt.Errorf("walk to connector %d", pe.GetTo())
 	}
 	fc, tc := a.Connectors[from], a.Connectors[pe.GetTo()]
