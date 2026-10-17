@@ -237,6 +237,11 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 		start.only(sm, startTile)
 		return p.assemble(ctx, nil, 0, started, 0)
 	}
+	if p.fromExit && r.GoalTile != nil {
+		if plan, ok := p.exitOntoGoal(startTile, started); ok {
+			return plan, nil
+		}
+	}
 	if p.fromExit {
 		start.only(sm, startTile)
 	} else if err := start.run(ctx, sm, startTile, &p.work); err != nil {
@@ -368,10 +373,20 @@ func (p *planner) search(ctx context.Context, started time.Time) (Plan, error) {
 	}
 	chain := s.chain[:0]
 	for id := finish; id != noConnector; id = s.parent[id] {
+		if len(chain)%cancelCheckInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return Plan{}, err
+			}
+		}
 		chain = append(chain, id)
 	}
 	s.chain = chain
 	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		if i%cancelCheckInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return Plan{}, err
+			}
+		}
 		chain[i], chain[j] = chain[j], chain[i]
 	}
 	plan, err := p.assemble(ctx, chain, best, started, expanded)
@@ -441,6 +456,31 @@ func (p *planner) seedSeamStarts(ctx context.Context, side *gridSearch, goalTile
 		}
 	}
 	return nil
+}
+
+// exitOntoGoal answers a start on an automatic exit that lands exactly on
+// the goal tile: the walker is carried there at once, so nothing needs
+// searching.
+func (p *planner) exitOntoGoal(startTile int32, started time.Time) (Plan, bool) {
+	r := p.r
+	sm, g := r.Start.Map, r.GoalTile
+	if !standable(g.Map, g.Map.Tile(g.X, g.Y)) {
+		return Plan{}, false
+	}
+	for _, exit := range sm.Exits[startTile] {
+		if !exit.Automatic || exit.To != g.Map.Index || exit.X != g.X || exit.Y != g.Y {
+			continue
+		}
+		start := Waypoint{Map: sm, X: r.Start.X, Y: r.Start.Y, Kind: Start}
+		use := start
+		use.Kind, use.Automatic, use.Label = UseExit, true, exit.Label
+		p.work -= 3
+		return Plan{
+			Found: true, Cost: Transition, Tiles: 1, Duration: time.Since(started),
+			Waypoints: []Waypoint{start, use, {Map: g.Map, X: g.X, Y: g.Y, Kind: Goal}},
+		}, true
+	}
+	return Plan{}, false
 }
 
 func (p *planner) avoided(m int32) bool {
@@ -578,7 +618,7 @@ func (p *planner) assemble(ctx context.Context, chain []int32, cost int32, start
 	}
 	last := a.Connectors[chain[len(chain)-1]]
 	lm := a.World.Maps[last.Map]
-	if r.GoalTile != nil {
+	if goal := r.GoalTile; goal != nil && (goal.Map != lm || goal.X != last.X || goal.Y != last.Y) {
 		if err := leg.run(ctx, lm, lm.Tile(last.X, last.Y), &p.work); err != nil {
 			return Plan{}, err
 		}
@@ -601,7 +641,8 @@ func (p *planner) walkTo(plan *Plan, g *gridSearch, m *world.Map, c Connector, s
 		if !ok {
 			return nil
 		}
-		return p.walk(plan, m, append(g.path(from, &p.s.path), tile), spacing)
+		p.s.path = append(g.path(from, &p.s.path), tile)
+		return p.walk(plan, m, p.s.path, spacing)
 	}
 	return p.walk(plan, m, g.path(tile, &p.s.path), spacing)
 }

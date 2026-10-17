@@ -425,6 +425,28 @@ func TestDiagonalStepsAcrossCardinalSeams(t *testing.T) {
 	checkWalkable(t, p)
 }
 
+func TestExitsOntoTheGoalSearchNothing(t *testing.T) {
+	rows := []string{}
+	for range 30 {
+		rows = append(rows, strings.Repeat(".", 30))
+	}
+	c := fixture.New(t)
+	c.Map("/t/booth", "..").Object("teleporter", 0, 0, "slaying /t/plaza", "hp 7", "sp 9")
+	c.Map("/t/plaza", rows...)
+	a, w := build(t, c)
+	goal := at(t, w, "/t/plaza", 7, 9)
+	p := plan(t, a, atlas.Request{Start: at(t, w, "/t/booth", 0, 0), GoalTile: &goal, MaxExpanded: 10})
+	if !p.Found || kinds(p) != "start exit goal" || p.Cost != atlas.Transition || p.Work > 10 {
+		t.Fatalf("work %d cost %d limit %v: %s", p.Work, p.Cost, p.LimitReached, describe(p))
+	}
+	// Arriving through a connector chain right on the goal floods the goal
+	// map once (for its connectors' costs), not a second time to walk on.
+	p = plan(t, a, atlas.Request{Start: at(t, w, "/t/booth", 1, 0), GoalTile: &goal})
+	if !p.Found || p.Work > 1000 {
+		t.Fatalf("via the chain: work %d %s", p.Work, describe(p))
+	}
+}
+
 func TestStartsInWallsUseSelfSeams(t *testing.T) {
 	// The east border leads back to the west one.
 	c := fixture.New(t)
