@@ -49,6 +49,8 @@ type Map struct {
 	Terrain []uint32
 	// Blocked marks static no_pass squares (walls, furniture, counters).
 	Blocked []bool
+	// Road marks tiles paved with a road floor.
+	Road []bool
 	// Locks maps a locked door's tile to the key identifier it requires.
 	Locks map[int32]string
 	// Exits maps a tile to the exits it holds.

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	pb "github.com/atrinik/pathfinder/gen/go/atrinik/pathfinder/v1"
+	"github.com/atrinik/pathfinder/internal/atlas"
 	"github.com/atrinik/pathfinder/internal/content"
 	"github.com/atrinik/pathfinder/internal/search"
 	"github.com/atrinik/pathfinder/internal/server"
@@ -34,6 +35,7 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("pathfinderd", flag.ContinueOnError)
 	contentRoot := flags.String("content", "", "content checkout holding arch/ and maps/ (required)")
+	atlasFile := flags.String("atlas", "", "prebuilt atlas file for the same content (from the atlas command); built at startup when unset")
 	listen := flags.String("listen", "127.0.0.1:7843", "TCP address to serve gRPC on")
 	maxExpanded := flags.Int("max-expanded", server.DefaultLimits.MaxExpanded, "upper bound on states one path search may expand")
 	maxConcurrent := flags.Int("max-concurrent", runtime.GOMAXPROCS(0),
@@ -60,6 +62,18 @@ func run(args []string) error {
 	logger.Info("content loaded", "maps", len(w.Maps), "tiles", w.States,
 		"transitions", w.Transitions(), "digest", w.Digest, "duration", time.Since(started))
 
+	var a *atlas.Atlas
+	if *atlasFile != "" {
+		if a, err = atlas.Load(w, *atlasFile); err != nil {
+			return fmt.Errorf("load atlas: %w", err)
+		}
+	} else {
+		a = atlas.Build(w)
+	}
+	stats := a.Stats()
+	logger.Info("atlas ready", "loaded", a.Loaded, "connectors", stats.Connectors, "edges", stats.Edges,
+		"road_tiles", stats.RoadTiles, "duration", a.BuildTime)
+
 	limits := server.DefaultLimits
 	limits.MaxExpanded = *maxExpanded
 	listener, err := net.Listen("tcp", *listen)
@@ -67,7 +81,7 @@ func run(args []string) error {
 		return err
 	}
 	grpcServer := grpc.NewServer()
-	pb.RegisterPathfinderServiceServer(grpcServer, server.New(search.NewEngine(w, *maxConcurrent), limits))
+	pb.RegisterPathfinderServiceServer(grpcServer, server.New(search.NewEngine(w, *maxConcurrent), a, limits))
 	healthServer := health.NewServer()
 	healthServer.SetServingStatus(pb.PathfinderService_ServiceDesc.ServiceName, healthpb.HealthCheckResponse_SERVING)
 	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)

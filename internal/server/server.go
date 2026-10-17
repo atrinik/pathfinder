@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	pb "github.com/atrinik/pathfinder/gen/go/atrinik/pathfinder/v1"
+	"github.com/atrinik/pathfinder/internal/atlas"
 	"github.com/atrinik/pathfinder/internal/search"
 	"github.com/atrinik/pathfinder/internal/world"
 	"google.golang.org/grpc/codes"
@@ -31,12 +32,13 @@ var DefaultLimits = Limits{MaxExpanded: search.DefaultMaxExpanded, MaxBlocked: 4
 type Service struct {
 	pb.UnimplementedPathfinderServiceServer
 	engine *search.Engine
+	atlas  *atlas.Atlas
 	limits Limits
 }
 
-// New returns a service over engine.
-func New(engine *search.Engine, limits Limits) *Service {
-	return &Service{engine: engine, limits: limits}
+// New returns a service over engine and the atlas of the same world.
+func New(engine *search.Engine, a *atlas.Atlas, limits Limits) *Service {
+	return &Service{engine: engine, atlas: a, limits: limits}
 }
 
 func (s *Service) mapOf(path, field string) (*world.Map, error) {
@@ -256,6 +258,96 @@ func borderPoint(m *world.Map, d [2]int32) (int32, int32) {
 		return size / 2
 	}
 	return pick(d[0], m.Width), pick(d[1], m.Height)
+}
+
+// maxSpacing bounds a plan's waypoint spacing; anything wider than a map
+// already keeps only the turns.
+const maxSpacing = 1 << 16
+
+// Plan implements PathfinderService.Plan.
+func (s *Service) Plan(ctx context.Context, req *pb.PlanRequest) (*pb.PlanResponse, error) {
+	start, err := s.position(req.GetStart(), "start")
+	if err != nil {
+		return nil, err
+	}
+	r := atlas.Request{Start: atlas.Position(start), Spacing: int32(min(req.GetSpacing(), maxSpacing))}
+	switch goal := req.GetGoal().(type) {
+	case *pb.PlanRequest_GoalTile:
+		tile, err := s.position(goal.GoalTile, "goal_tile")
+		if err != nil {
+			return nil, err
+		}
+		goalTile := atlas.Position(tile)
+		r.GoalTile = &goalTile
+	case *pb.PlanRequest_GoalMap:
+		if r.GoalMap, err = s.mapOf(goal.GoalMap, "goal_map"); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, status.Error(codes.InvalidArgument, "goal_tile or goal_map is required")
+	}
+	if len(req.GetAvoidedMaps()) > s.limits.MaxListed {
+		return nil, status.Errorf(codes.InvalidArgument, "at most %d avoided maps", s.limits.MaxListed)
+	}
+	if len(req.GetAvoidedMaps()) > 0 {
+		r.Avoided = make(map[int32]bool, len(req.GetAvoidedMaps()))
+		for _, path := range req.GetAvoidedMaps() {
+			if m, ok := s.engine.World().Lookup(path); ok {
+				r.Avoided[m.Index] = true
+			}
+		}
+	}
+	p, err := s.atlas.Plan(ctx, r)
+	if err != nil {
+		return nil, searchError(err)
+	}
+	resp := &pb.PlanResponse{
+		Status: pb.PathStatus_PATH_STATUS_NO_PATH,
+		Cost:   uint32(p.Cost),
+		Tiles:  uint32(p.Tiles),
+		Metrics: &pb.PlanMetrics{
+			Expanded:       uint64(p.Expanded),
+			DurationMicros: uint64(p.Duration.Microseconds()),
+		},
+	}
+	if p.Found {
+		resp.Status = pb.PathStatus_PATH_STATUS_FOUND
+	}
+	for _, wp := range p.Waypoints {
+		resp.Waypoints = append(resp.Waypoints, &pb.Waypoint{
+			Position:  &pb.Position{Map: wp.Map.Path, X: wp.X, Y: wp.Y},
+			Kind:      waypointKinds[wp.Kind],
+			Automatic: wp.Automatic,
+			Label:     wp.Label,
+		})
+	}
+	return resp, nil
+}
+
+var waypointKinds = map[atlas.WaypointKind]pb.WaypointKind{
+	atlas.Start:     pb.WaypointKind_WAYPOINT_KIND_START,
+	atlas.Walk:      pb.WaypointKind_WAYPOINT_KIND_WALK,
+	atlas.UseExit:   pb.WaypointKind_WAYPOINT_KIND_EXIT,
+	atlas.CrossSeam: pb.WaypointKind_WAYPOINT_KIND_SEAM,
+	atlas.Arrive:    pb.WaypointKind_WAYPOINT_KIND_ARRIVE,
+	atlas.Goal:      pb.WaypointKind_WAYPOINT_KIND_GOAL,
+}
+
+// GetAtlasInfo implements PathfinderService.GetAtlasInfo.
+func (s *Service) GetAtlasInfo(context.Context, *pb.GetAtlasInfoRequest) (*pb.GetAtlasInfoResponse, error) {
+	stats := s.atlas.Stats()
+	source := pb.AtlasSource_ATLAS_SOURCE_BUILT
+	if s.atlas.Loaded {
+		source = pb.AtlasSource_ATLAS_SOURCE_FILE
+	}
+	return &pb.GetAtlasInfoResponse{
+		Connectors:     uint32(stats.Connectors),
+		Edges:          uint32(stats.Edges),
+		RoadTiles:      uint32(stats.RoadTiles),
+		ContentDigest:  s.atlas.World.Digest,
+		Source:         source,
+		DurationMicros: uint64(s.atlas.BuildTime.Microseconds()),
+	}, nil
 }
 
 // GetWorldInfo implements PathfinderService.GetWorldInfo.
